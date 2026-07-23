@@ -7,12 +7,15 @@ name = "privacy-firewall"
 version = "0.1.0"
 description = "Offline-first PII Detection & Redaction Engine"
 requires-python = ">=3.12"
-# AGPL because the redaction engine links PyMuPDF (AGPL-3.0); see packaging/README.md.
+# The engine no longer links any copyleft component: PDFium and pypdfium2 are
+# BSD-3-Clause/Apache-2.0 and Pillow is MIT-CMU, so this licence is now a free
+# choice rather than an obligation inherited from PyMuPDF. See packaging/README.md.
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 dependencies = [
     "pydantic>=2",
-    "pymupdf>=1.24",
+    "pypdfium2>=5",
+    "pillow>=10",
     "typer>=0.12",
     "pyyaml>=6",
 ]
@@ -44,6 +47,10 @@ dev = [
     "mypy>=1.11",
     "pre-commit>=3.8",
     "python-docx>=1.1",
+    # Test-only, never shipped: builds fixture PDFs and acts as an *independent*
+    # engine for verifying redaction output. Proving with a different renderer
+    # than the one that wrote the file is a far stronger claim than self-checking.
+    "pymupdf>=1.24",
 ]
 
 [tool.setuptools.packages.find]

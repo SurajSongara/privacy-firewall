@@ -93,8 +93,9 @@ constants in `src/privacy_firewall/ui/html.py`.
 
 ### Bundle size
 
-A verified Windows build is **~314 MB** on disk (roughly 120 MB compressed into
-the installer). The `EXCLUDES` list in the spec is what keeps it there: without
+A verified Windows build was **~314 MB** on disk (roughly 120 MB compressed into
+the installer) with the PyMuPDF backend. Swapping to pypdfium2 removes ~30 MB;
+re-measure on the next CI build and update this figure. The `EXCLUDES` list in the spec is what keeps it there: without
 it, a developer machine with a rich `site-packages` produced **587 MB** by
 dragging in SciPy, pandas, scikit-learn and `imageio_ffmpeg` through the OCR
 dependency graph. Every exclusion was validated by re-running `smoke_test.py`.
@@ -104,7 +105,7 @@ Remaining large components, and why they stay:
 | Component | Size | Why |
 |---|---|---|
 | `cv2` | 137 MB | OpenCV, required by RapidOCR |
-| `pymupdf` | 38 MB | The PDF engine |
+| `pypdfium2` | 8 MB | The PDF engine (was `pymupdf`, 38 MB) |
 | `onnxruntime` | 34 MB | OCR inference |
 | `numpy.libs` + `numpy` | 28 MB | Required by OpenCV/RapidOCR |
 
@@ -114,12 +115,22 @@ but only uses array operations — never the GUI functions. Forcing
 installing the headless variant after the project install, then re-run
 `smoke_test.py`; if OCR still passes, the saving is free.
 
-## Licensing (AGPL)
+## Licensing
 
-The bundle links AGPL-3.0 licensed PyMuPDF, so every distributed artifact must
-carry the licence and a source offer. `LICENSE` and `SOURCE_OFFER.txt` are
-installed alongside the app on all three platforms, and Inno Setup shows the
-licence during installation. If you fork or rebrand this, keep both files.
+**No copyleft component is bundled.** The PDF engine is PDFium (BSD-3-Clause)
+via pypdfium2; Pillow is MIT-CMU; RapidOCR/ONNX Runtime are Apache-2.0; the web
+stack is MIT/BSD. Privacy Firewall's own source is AGPL-3.0 by choice, not by
+obligation inherited from a dependency — so relicensing under permissive terms
+(or shipping proprietary builds) is a decision the maintainers can now make
+freely.
+
+`PyMuPDF is a test-only dependency` and is listed in the spec's `EXCLUDES`:
+bundling it would re-attach the AGPL obligation this backend removed. If you
+change the spec, keep that exclusion.
+
+`LICENSE` and `SOURCE_OFFER.txt` are still installed alongside the app on all
+three platforms, and Inno Setup shows the licence during installation. If you
+fork or rebrand this, keep both files.
 
 ## Code signing
 

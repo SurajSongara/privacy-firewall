@@ -3,15 +3,14 @@
 Every component that opens a PDF (parser, OCR, renderer, page images,
 diagnostics, UI session) goes through :func:`open_pdf` so encrypted files
 are authenticated in one place and fail with a single clear error instead
-of PyMuPDF's cryptic ``document closed or encrypted``.
+of PDFium's generic ``Failed to load document``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
 
-import fitz
+from privacy_firewall.parsers.pdfium_compat import PdfiumDocument, open_document
 
 
 class EncryptedPDFError(ValueError):
@@ -24,7 +23,7 @@ def open_pdf(
     stream: bytes | None = None,
     password: str | None = None,
     required: bool = True,
-) -> Any:
+) -> PdfiumDocument:
     """Open a PDF, authenticating it when it is password-protected.
 
     Args:
@@ -38,23 +37,15 @@ def open_pdf(
             encryption rather than crash).
 
     Returns:
-        An open PyMuPDF document.
+        An open document.
 
     Raises:
         EncryptedPDFError: If the document is locked and *required* is
             ``True`` and no correct password was supplied.
     """
-    doc = fitz.open(stream=stream, filetype="pdf") if stream is not None else fitz.open(str(path))
+    doc = open_document(path, stream=stream, password=password)
     if doc.needs_pass:
         if password:
-            if doc.authenticate(password):
-                # Some PyMuPDF builds leave ``needs_pass`` set after a
-                # successful authenticate, which confuses downstream
-                # "is it unlocked?" checks. Round-trip through decrypted
-                # bytes so every consumer gets a reliably-unlocked doc.
-                data = cast(bytes, doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE))
-                doc.close()
-                return fitz.open(stream=data, filetype="pdf")
             doc.close()
             raise EncryptedPDFError("Incorrect password for this PDF.")
         if required:
@@ -67,9 +58,9 @@ def open_pdf(
 
 def is_encrypted(path: str | Path) -> bool:
     """Whether the PDF at *path* is locked (needs a password to open)."""
-    doc = fitz.open(str(path))
+    doc = open_document(path)
     try:
-        return bool(doc.needs_pass)
+        return doc.needs_pass
     finally:
         doc.close()
 
@@ -93,16 +84,14 @@ def decrypted_bytes(path: str | Path, password: str | None = None) -> bytes | No
         EncryptedPDFError: If the file is locked and no correct password
             was supplied.
     """
-    doc = fitz.open(str(path))
+    if not is_encrypted(path):
+        return None
+    if not password:
+        raise EncryptedPDFError("This PDF is password-protected. Provide the password to open it.")
+    doc = open_document(path, password=password)
     try:
-        if not doc.needs_pass:
-            return None
-        if not password:
-            raise EncryptedPDFError(
-                "This PDF is password-protected. Provide the password to open it."
-            )
-        if not doc.authenticate(password):
+        if doc.needs_pass:
             raise EncryptedPDFError("Incorrect password for this PDF.")
-        return cast(bytes, doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE))
+        return doc.tobytes()
     finally:
         doc.close()

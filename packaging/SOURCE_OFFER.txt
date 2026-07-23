@@ -6,8 +6,9 @@ License, version 3 (AGPL-3.0). The full licence text is installed alongside this
 file as LICENSE.
 
 This application is distributed as a binary bundle that also includes other free
-software, notably PyMuPDF (AGPL-3.0), which the redaction engine uses to read and
-rewrite PDF content streams.
+software. As of the PDFium backend change, no copyleft-licensed component is
+bundled: the PDF engine is PDFium (BSD-3-Clause) via pypdfium2. The AGPL applies
+to Privacy Firewall's own source by the maintainers' choice.
 
 WHERE TO GET THE SOURCE
 -----------------------
@@ -38,7 +39,8 @@ THIRD-PARTY COMPONENTS
 
 This bundle includes, among others:
 
-  * PyMuPDF / MuPDF        — AGPL-3.0
+  * PDFium (via pypdfium2)  — BSD-3-Clause / Apache-2.0
+  * Pillow                  — MIT-CMU
   * RapidOCR + ONNX Runtime — Apache-2.0
   * FastAPI, Starlette, Uvicorn — MIT / BSD
   * Pydantic               — MIT

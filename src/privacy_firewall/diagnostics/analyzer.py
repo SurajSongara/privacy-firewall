@@ -13,7 +13,7 @@ from privacy_firewall.parsers.pdf_open import open_pdf
 class DocumentAnalyzer:
     """Inspects a PDF file and produces a structured diagnostic report.
 
-    The analyser opens the document with PyMuPDF, runs a series of checks
+    The analyser opens the document, runs a series of checks
     (text presence, image count, rotation, encryption, ...), scores the
     quality of any extractable text, and recommends a processing pipeline.
     """
@@ -62,10 +62,10 @@ class DocumentAnalyzer:
 
     @staticmethod
     def _analyze_doc(doc: Any, file_path: str) -> DiagnosticReport:
-        """Core analysis logic — inspects an open PyMuPDF document.
+        """Core analysis logic — inspects an open document.
 
         Args:
-            doc: An open PyMuPDF document.
+            doc: An open document.
             file_path: The file path string (empty for byte input).
 
         Returns:

@@ -147,7 +147,7 @@ PDFParser ──► OCRProvider (optional) ──► HybridMerger ──► Dete
 - Each stage exchanges immutable Pydantic v2 models — the engine has zero framework dependencies, and the CLI/UI are thin wrappers around it.
 - Detectors are pure functions `(Document) → list[Detection]`, individually testable, with priority tiers (`regex > validator > heuristic > ner > llm`) used by the fusion engine to resolve overlaps.
 - A context scorer adjusts confidence using the surrounding line (e.g. a 10-digit number on a line mentioning *UTR* is not a phone number), and a policy maps confidence to *redact / ask / keep* suggestions.
-- Redaction uses PyMuPDF's `apply_redactions()` — the text is removed from the content stream. The original file is never modified; output always goes to a new path.
+- Redaction deletes the text objects covering each match and regenerates the page content stream, re-inserting the surviving characters at their original positions — the text leaves the file rather than being covered up. Scanned pages have the underlying image pixels zeroed. The original file is never modified; output always goes to a new path.
 
 ## Project structure
 
@@ -156,7 +156,7 @@ src/privacy_firewall/
 ├── __main__.py        # Typer CLI (studio is the default command)
 ├── cli/               # One file per subcommand — zero business logic
 ├── models/            # Frozen Pydantic v2 models (Document, Detection, …)
-├── parsers/           # PyMuPDF PDF parser
+├── parsers/           # PDFium PDF parser (pypdfium2)
 ├── ocr/               # OCR provider registry + Tesseract/Paddle/RapidOCR adapters
 ├── detectors/         # 9 detectors + registry + dedup utilities
 ├── engine/            # Context scoring, fusion, decision, redaction planning
@@ -187,4 +187,6 @@ This tool exists to keep your documents private, and it practices what it preach
 
 ## License
 
-[GNU AGPL-3.0](LICENSE). The redaction engine links [PyMuPDF](https://pymupdf.readthedocs.io/), which is AGPL-licensed, so this project is too — if you distribute it (including as a hosted service or a packaged binary), you must make the corresponding source available. Build and packaging details are in [`packaging/README.md`](packaging/README.md).
+[GNU AGPL-3.0](LICENSE) — currently, by choice rather than obligation.
+
+The PDF engine is [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (BSD-3-Clause/Apache-2.0) wrapping Google's PDFium (BSD-3-Clause); the rest of the runtime is Pillow (MIT-CMU), pydantic, Typer and PyYAML (all MIT/BSD). **No copyleft component is linked or distributed**, so this project is free to be relicensed under permissive terms. PyMuPDF remains a test-only dependency — it builds fixtures and acts as an independent verifier of redaction output — and is explicitly excluded from packaged builds. Build and packaging details are in [`packaging/README.md`](packaging/README.md).

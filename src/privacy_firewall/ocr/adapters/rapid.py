@@ -5,12 +5,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from privacy_firewall.models.blocks import TextBlock, TextSpan
 from privacy_firewall.models.document import Document, Page
 from privacy_firewall.models.geometry import BoundingBox
 from privacy_firewall.ocr.provider import OCRProvider
+from privacy_firewall.parsers.pdfium_compat import PdfiumDocument, Rect, open_document
 
 
 class RapidOCRAdapter(OCRProvider):
@@ -57,7 +56,7 @@ class RapidOCRAdapter(OCRProvider):
 
     def process(self, path: str | Path) -> Document:
         """Run OCR on a PDF file on disk."""
-        doc = fitz.open(str(path))
+        doc = open_document(path)
         try:
             return self._process_doc(doc)
         finally:
@@ -65,13 +64,13 @@ class RapidOCRAdapter(OCRProvider):
 
     def process_bytes(self, data: bytes) -> Document:
         """Run OCR on PDF content from raw bytes."""
-        doc = fitz.open(stream=data, filetype="pdf")
+        doc = open_document(stream=data)
         try:
             return self._process_doc(doc)
         finally:
             doc.close()
 
-    def _process_doc(self, doc: fitz.Document) -> Document:
+    def _process_doc(self, doc: PdfiumDocument) -> Document:
         """Core logic: render each page, run OCR, build Document."""
         engine = self._get_engine()
         pages: list[Page] = []
@@ -104,7 +103,7 @@ class RapidOCRAdapter(OCRProvider):
         ocr_result: Any,
         page_number: int,
         scale: float,
-        rect: fitz.Rect,
+        rect: Rect,
     ) -> list[TextBlock]:
         """Convert RapidOCR result into TextBlock items."""
         blocks: list[TextBlock] = []

@@ -99,8 +99,10 @@ EXCLUDES = [
     "imageio", "imageio_ffmpeg", "torch", "transformers", "tokenizers", "hf_xet",
     # Alternative OCR backends we do not ship (registry falls back to rapidocr)
     "tesserocr", "paddleocr", "paddle", "paddlepaddle",
-    # Alternative PDF backends -- PyMuPDF is the one in use
-    "pypdfium2", "pypdfium2_raw",
+    # Alternative PDF backends -- pypdfium2 is the one in use. PyMuPDF is a
+    # test-only dependency (the independent verifier) and must never be bundled:
+    # shipping it would re-attach the AGPL obligation this backend removed.
+    "fitz", "pymupdf",
 ]
 
 # --- Icon -------------------------------------------------------------------

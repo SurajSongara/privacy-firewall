@@ -12,11 +12,11 @@ from privacy_firewall.models.geometry import BoundingBox
 from privacy_firewall.parsers.pdf_open import open_pdf
 
 WordTuple = tuple[float, float, float, float, str, int, int, int]
-"""Type of each word tuple returned by PyMuPDF's ``get_text("words")``."""
+"""Type of each word tuple returned by ``get_text("words")``."""
 
 
 class PDFParser:
-    """Parser that extracts text and image blocks from PDF files using PyMuPDF."""
+    """Parser that extracts text and image blocks from PDF files."""
     def __init__(self, file_path: str | Path, password: str | None = None) -> None:
         """Initialize the parser with a path to a PDF file.
 
@@ -105,7 +105,7 @@ class PDFParser:
         Image blocks are extracted from ``get_text("dict")`` as before.
 
         Args:
-            raw: Raw page data as returned by PyMuPDF's ``get_text("dict")``.
+            raw: Raw page data as returned by ``get_text("dict")``.
             words_data: Word-level data from ``get_text("words")``.
             page_number: The 1-based page number.
 
@@ -121,7 +121,7 @@ class PDFParser:
             block_words.setdefault(block_no, []).append(w)
 
         # Map dict block bboxes to words using spatial proximity
-        # PyMuPDF's get_text("words") uses different block numbering than get_text("dict")
+        # get_text("words") uses different block numbering than get_text("dict")
         for item in raw.get("blocks", []):
             item_typed: dict[str, Any] = item
             bbox = BoundingBox(

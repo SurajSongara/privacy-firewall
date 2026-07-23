@@ -787,7 +787,7 @@ class ReviewSession:
     def _page_char_words(self, page_number: int) -> dict[str, list[dict[str, Any]]]:
         """Whitespace-delimited words with per-char geometry, keyed by text.
 
-        Built once per page from PyMuPDF's ``rawdict`` of the source PDF
+        Built once per page from the ``rawdict`` of the source PDF
         (same extraction family as ``get_text("words")``, so word texts
         line up with the parser's spans on native documents).
         """

@@ -203,27 +203,43 @@ def build_certificate(
 
 def render_certificate_pdf(cert: Certificate, dest: Path) -> Path:
     """Render *cert* as a one-page PDF at *dest*."""
-    import fitz
+    import pypdfium2 as pdfium
+
+    from privacy_firewall.parsers.pdfium_compat import Rect
+    from privacy_firewall.renderer.pdfium_draw import PageWriter
 
     navy = (0.13, 0.29, 0.53)
     green = (0.14, 0.55, 0.24)
     red = (0.78, 0.11, 0.11)
     grey = (0.42, 0.42, 0.42)
+    height = 842.0
 
-    doc = fitz.open()
+    doc = pdfium.PdfDocument.new()
     try:
-        page = doc.new_page(width=595, height=842)
-        page.draw_rect(fitz.Rect(0, 0, 595, 92), fill=navy, color=navy)
-        page.insert_text(
+        raw_page = doc.new_page(595.0, height)
+        page = PageWriter(doc, raw_page, height)
+
+        def insert_text(
+            origin: tuple[float, float],
+            text: str,
+            *,
+            fontsize: float,
+            color: tuple[float, float, float] = (0.0, 0.0, 0.0),
+            fontname: str = "helv",
+        ) -> None:
+            page.insert_text(origin, text, fontsize=fontsize, fontname=fontname, color=color)
+
+        page.draw_rect(Rect(0, 0, 595, 92), fill=navy)
+        insert_text(
             (50, 50), "Redaction Certificate", fontsize=22, color=(1, 1, 1), fontname="hebo"
         )
-        page.insert_text(
-            (50, 74), "privacy-firewall — offline PII redaction", fontsize=10, color=(1, 1, 1)
+        insert_text(
+            (50, 74), "privacy-firewall - offline PII redaction", fontsize=10, color=(1, 1, 1)
         )
 
         ok = cert.verification_passed
-        page.draw_rect(fitz.Rect(50, 116, 545, 158), fill=green if ok else red, color=None)
-        page.insert_text(
+        page.draw_rect(Rect(50, 116, 545, 158), fill=green if ok else red)
+        insert_text(
             (64, 143),
             "VERIFICATION PASSED" if ok else "VERIFICATION FAILED",
             fontsize=16,
@@ -242,28 +258,30 @@ def render_certificate_pdf(cert: Certificate, dest: Path) -> Path:
         ]
         y = 195
         for label, value in rows:
-            page.insert_text((50, y), label, fontsize=10, color=grey)
-            page.insert_text((220, y), value, fontsize=9, fontname="cour")
+            insert_text((50, y), label, fontsize=10, color=grey)
+            insert_text((220, y), value, fontsize=9, fontname="cour")
             y += 22
 
         y += 8
-        page.insert_text((50, y), "Redactions by type", fontsize=11, color=navy, fontname="hebo")
+        insert_text((50, y), "Redactions by type", fontsize=11, color=navy, fontname="hebo")
         y += 20
         if cert.redactions_by_type:
             for dtype, count in cert.redactions_by_type.items():
-                page.insert_text((60, y), dtype, fontsize=10, color=grey)
-                page.insert_text((220, y), str(count), fontsize=10, fontname="cour")
+                insert_text((60, y), dtype, fontsize=10, color=grey)
+                insert_text((220, y), str(count), fontsize=10, fontname="cour")
                 y += 18
         else:
-            page.insert_text((60, y), "(none)", fontsize=10, color=grey)
+            insert_text((60, y), "(none)", fontsize=10, color=grey)
             y += 18
 
         y += 12
         for line in _wrap(cert.verification_detail, 92):
-            page.insert_text((50, y), line, fontsize=9, color=grey)
+            insert_text((50, y), line, fontsize=9, color=grey)
             y += 14
 
-        doc.save(str(dest))
+        page.finalize()
+        with Path(dest).open("wb") as handle:
+            doc.save(handle)
     finally:
         doc.close()
     return dest
