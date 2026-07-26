@@ -33,6 +33,30 @@ def _build_registry(detector_names: list[str] | None) -> DetectorRegistry:
         raise typer.BadParameter(str(exc)) from exc
 
 
+def _report_hidden(input_pdf: Path, password: str | None) -> None:
+    """Print PII found outside the page content stream, if any.
+
+    Metadata and annotations are invisible on the page but readable, and a
+    redaction that only edits drawing commands leaves them behind — so they are
+    worth surfacing explicitly during detection.
+    """
+    from privacy_firewall.engine.hidden_pii import scan_hidden_pii
+    from privacy_firewall.parsers.pdf_open import EncryptedPDFError, open_pdf
+
+    try:
+        with open_pdf(input_pdf, password=password) as doc:
+            findings = scan_hidden_pii(doc)
+    except (EncryptedPDFError, OSError, ValueError):
+        return  # non-PDF input or unreadable — nothing to add
+
+    if not findings:
+        return
+    typer.echo(f"\nHidden PII - metadata / annotations ({len(findings)}):")
+    typer.echo("  (invisible on the page; removed automatically on redaction)")
+    for i, f in enumerate(findings, start=1):
+        typer.echo(f"  {i:>3}. {f.detection_type:8s} | {f.value!r:30s} | {f.location}")
+
+
 def _engine_help() -> str:
     from privacy_firewall.ocr import list_engines
 
@@ -100,7 +124,11 @@ def detect_cmd(
     pw = resolve_password(input_pdf, password)
     try:
         document, source = get_merged_document(
-            input_pdf, force_ocr=ocr, auto=auto, ocr_provider=ocr_engine, password=pw,
+            input_pdf,
+            force_ocr=ocr,
+            auto=auto,
+            ocr_provider=ocr_engine,
+            password=pw,
         )
     except EncryptedPDFError as exc:
         typer.echo(f"Error: {exc}", err=True)
@@ -122,6 +150,8 @@ def detect_cmd(
             f"  {i:>3}. Page {d.page_number} | {d.detection_type:8s} | {d.text!r:30s} "
             f"| confidence={d.confidence:.2f} | detector={d.detector_name}"
         )
+
+    _report_hidden(input_pdf, pw)
 
     if plan_out is not None:
         try:

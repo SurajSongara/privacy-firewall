@@ -74,7 +74,10 @@ class PDFRenderer:
         doc = open_pdf(input_path, password=password)
         try:
             self._apply_plan(doc, plan)
-            doc.save(str(output_path))
+            # Strip annotations and metadata from the shareable copy: PII in a
+            # form field, sticky note or the Info dictionary lives outside the
+            # content stream and would otherwise survive the redaction.
+            doc.save(str(output_path), sanitize=True)
         finally:
             doc.close()
 
@@ -94,7 +97,7 @@ class PDFRenderer:
         doc = open_document(stream=data)
         try:
             PDFRenderer._apply_plan(doc, plan)
-            return doc.tobytes()
+            return doc.tobytes(sanitize=True)
         finally:
             doc.close()
 

@@ -34,7 +34,11 @@ from typing import Any
 import pypdfium2 as pdfium
 import pypdfium2.raw as raw
 
-__all__ = ["PdfiumDocument", "PdfiumPage", "Rect", "open_document"]
+__all__ = ["Annotation", "PdfiumDocument", "PdfiumPage", "Rect", "open_document"]
+
+#: Document Info-dictionary keys that can carry PII (name, account, email in an
+#: export tool's stamp). Producer/Creator/dates are excluded as non-PII noise.
+_META_KEYS: tuple[str, ...] = ("Title", "Author", "Subject", "Keywords")
 
 _BLOCK_GAP_RATIO = 1.3
 """A vertical gap wider than this multiple of the line height starts a block."""
@@ -109,10 +113,7 @@ class Rect:
     def intersects(self, other: Rect) -> bool:
         """Whether the two rectangles share any area."""
         return not (
-            self.x1 <= other.x0
-            or other.x1 <= self.x0
-            or self.y1 <= other.y0
-            or other.y1 <= self.y0
+            self.x1 <= other.x0 or other.x1 <= self.x0 or self.y1 <= other.y0 or other.y1 <= self.y0
         )
 
     def contains_point(self, x: float, y: float) -> bool:
@@ -154,6 +155,53 @@ def _flip(rect_ltrb: tuple[float, float, float, float], media_height: float) -> 
     """PDFium ``(left, bottom, right, top)`` to a top-left :class:`Rect`."""
     left, bottom, right, top = rect_ltrb
     return Rect(left, media_height - top, right, media_height - bottom)
+
+
+#: PDFium annotation subtype codes (``FPDF_ANNOT_*``) to readable names, for the
+#: kinds that can carry text a redaction must account for.
+_ANNOT_SUBTYPES: dict[int, str] = {
+    1: "text",
+    3: "freetext",
+    9: "highlight",
+    13: "stamp",
+    16: "popup",
+    17: "fileattachment",
+    20: "widget",
+}
+
+
+def _annot_string(annot: Any, key: str) -> str:
+    """Read a string entry (e.g. ``Contents``, ``V``, ``T``) from an annotation.
+
+    ``FPDFAnnot_GetStringValue`` takes an ASCII *key* and fills a UTF-16LE
+    buffer; the returned length counts the trailing NUL. Returns ``""`` when the
+    entry is absent.
+    """
+    key_bytes = key.encode("ascii") + b"\x00"
+    length = raw.FPDFAnnot_GetStringValue(annot, key_bytes, None, 0)
+    if length <= 2:  # only the NUL terminator: nothing to read
+        return ""
+    buffer = ctypes.create_string_buffer(length)
+    raw.FPDFAnnot_GetStringValue(
+        annot, key_bytes, ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ushort)), length
+    )
+    return buffer.raw[: length - 2].decode("utf-16-le", errors="ignore")
+
+
+@dataclass(frozen=True)
+class Annotation:
+    """Text-bearing content that lives *outside* the page content stream.
+
+    Comments, free-text notes, stamps and form-field (widget) values are stored
+    in the page's annotation list, not its drawing commands, so plain text
+    extraction never sees them. Each carries a :attr:`rect` on the page (already
+    flipped to top-left space) so it can also be redacted visually.
+    """
+
+    subtype: str
+    text: str
+    field_name: str
+    rect: Rect
 
 
 class PdfiumPage:
@@ -202,6 +250,46 @@ class PdfiumPage:
             self._textpage.close()
             self._textpage = None
         self._cache.clear()
+
+    def annotations(self) -> list[Annotation]:
+        """Text-bearing annotations on this page (comments, notes, form fields).
+
+        These live outside the content stream, so :meth:`get_text` never
+        reports them — an account holder's name in a form field or a phone
+        number in a sticky note would otherwise slip past detection *and*
+        redaction. Annotations with no readable text (pure links, empty popups)
+        are skipped.
+        """
+        page = self._page.raw
+        count = raw.FPDFPage_GetAnnotCount(page)
+        results: list[Annotation] = []
+        for index in range(count):
+            annot = raw.FPDFPage_GetAnnot(page, index)
+            if not annot:
+                continue
+            try:
+                subtype = _ANNOT_SUBTYPES.get(raw.FPDFAnnot_GetSubtype(annot), "other")
+                # Contents holds markup-annotation text; V holds a form field's
+                # value. Either (or both) may be present.
+                parts = [_annot_string(annot, "Contents"), _annot_string(annot, "V")]
+                text = " ".join(p for p in parts if p).strip()
+                field_name = _annot_string(annot, "T")
+                if not text:
+                    continue
+                rect = self._annot_rect(annot)
+                results.append(
+                    Annotation(subtype=subtype, text=text, field_name=field_name, rect=rect)
+                )
+            finally:
+                raw.FPDFPage_CloseAnnot(annot)
+        return results
+
+    def _annot_rect(self, annot: Any) -> Rect:
+        """Flipped page rectangle of an annotation, or empty if unavailable."""
+        rectf = raw.FS_RECTF()
+        if not raw.FPDFAnnot_GetRect(annot, ctypes.byref(rectf)):
+            return Rect()
+        return _flip((rectf.left, rectf.bottom, rectf.right, rectf.top), self.media_height)
 
     # ---- text -----------------------------------------------------------
 
@@ -437,8 +525,13 @@ class PdfiumPage:
             blocks = [b for b in blocks if Rect(*b["bbox"]).intersects(clip)]
         if kind == "dict":
             blocks = [
-                {**b, "lines": [{**ln, "spans": [self._strip_chars(s) for s in ln["spans"]]}
-                                for ln in b["lines"]]}
+                {
+                    **b,
+                    "lines": [
+                        {**ln, "spans": [self._strip_chars(s) for s in ln["spans"]]}
+                        for ln in b["lines"]
+                    ],
+                }
                 if b["type"] == 0
                 else b
                 for b in blocks
@@ -592,6 +685,21 @@ class PdfiumDocument:
         """Number of pages."""
         return len(self._pdf)
 
+    def metadata(self) -> dict[str, str]:
+        """PII-bearing Info-dictionary entries (Title/Author/Subject/Keywords).
+
+        Export tools routinely stamp the account holder's name or number into
+        these fields, where they are invisible on the page but trivially
+        readable. Producer/Creator/date noise is excluded. Empty values are
+        dropped, so an empty dict means nothing sensitive was found here.
+        """
+        result: dict[str, str] = {}
+        for key in _META_KEYS:
+            value = self._pdf.get_metadata_value(key).strip()
+            if value:
+                result[key] = value
+        return result
+
     def __len__(self) -> int:
         """Number of pages."""
         return 0 if self._needs_pass else len(self._pdf)
@@ -624,22 +732,50 @@ class PdfiumDocument:
         self._pages.clear()
         self._pdf.close()
 
+    def sanitize(self) -> None:
+        """Strip every annotation from every page (comments, notes, form fields).
+
+        Annotations live outside the content stream, so a redaction that only
+        edits the drawing commands leaves them untouched — a phone number in a
+        sticky note or a name in a form field would survive. A redacted document
+        is meant to be shared clean, so they are removed wholesale, matching what
+        "sanitise document" does in desktop PDF tools. Document metadata is
+        dropped separately by :meth:`save` (the fresh output document has none).
+        """
+        for i in range(len(self._pdf)):
+            page = self._pdf[i]
+            # Remove from the tail so surviving indices never shift.
+            for index in range(raw.FPDFPage_GetAnnotCount(page.raw) - 1, -1, -1):
+                raw.FPDFPage_RemoveAnnot(page.raw, index)
+
     # ---- output ---------------------------------------------------------
 
-    def tobytes(self) -> bytes:
-        """Serialise the document, always unencrypted."""
+    def tobytes(self, *, sanitize: bool = False) -> bytes:
+        """Serialise the document, always unencrypted.
+
+        Args:
+            sanitize: Also strip annotations and metadata (for redacted output).
+        """
         buf = io.BytesIO()
-        self.save(buf)
+        self.save(buf, sanitize=sanitize)
         return buf.getvalue()
 
-    def save(self, dest: Any) -> None:
+    def save(self, dest: Any, *, sanitize: bool = False) -> None:
         """Write the document to a path or file object, always unencrypted.
 
         PDFium has no encryption *writer*, but ``FPDF_SaveAsCopy`` preserves the
         source's encryption dictionary. Copying the pages into a fresh document
         is what actually drops it, so a redacted copy always opens without a
-        password.
+        password. The fresh document also carries no Info dictionary, so the
+        source's metadata never reaches the output.
+
+        Args:
+            dest: A path or writable binary file object.
+            sanitize: Strip annotations before writing (for redacted output).
+                Metadata is always dropped by the fresh-document copy.
         """
+        if sanitize:
+            self.sanitize()
         out = pdfium.PdfDocument.new()
         try:
             out.import_pages(self._pdf)

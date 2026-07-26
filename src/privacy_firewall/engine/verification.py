@@ -24,9 +24,11 @@ from pydantic import BaseModel
 from privacy_firewall.detectors import build_registry
 from privacy_firewall.detectors.registry import DetectorRegistry
 from privacy_firewall.engine.decision import file_sha256
+from privacy_firewall.engine.hidden_pii import scan_hidden_pii
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
+from privacy_firewall.parsers.pdf_open import open_pdf
 from privacy_firewall.parsers.pdf_parser import PDFParser
 
 CERTIFICATE_SCHEMA_VERSION = 1
@@ -81,6 +83,8 @@ class VerificationResult:
         literal_leaks: Redacted values still extractable from the text layer.
         residual_detections: Detector hits on the output matching a
             redacted value.
+        hidden_leaks: PII still present on the output's non-content surfaces
+            (document metadata, annotations, form fields).
     """
 
     passed: bool
@@ -88,6 +92,7 @@ class VerificationResult:
     leaked_types: tuple[str, ...]
     literal_leaks: int
     residual_detections: int
+    hidden_leaks: int
 
 
 def verify_redaction(
@@ -136,12 +141,22 @@ def verify_redaction(
             residual += 1
             leaked_types.add(det.detection_type)
 
+    # Check 3 — PII surviving on non-content surfaces (metadata, annotations,
+    # form fields). Redaction sanitises these, so a clean output has none; any
+    # residual hidden PII is a leak the text-layer checks above cannot see.
+    hidden_leaks = 0
+    with open_pdf(output_pdf) as opened:
+        for finding in scan_hidden_pii(opened, registry=registry):
+            hidden_leaks += 1
+            leaked_types.add(finding.detection_type)
+
     return VerificationResult(
-        passed=literal_leaks == 0 and residual == 0,
+        passed=literal_leaks == 0 and residual == 0 and hidden_leaks == 0,
         checked_values=len(value_types),
         leaked_types=tuple(sorted(leaked_types)),
         literal_leaks=literal_leaks,
         residual_detections=residual,
+        hidden_leaks=hidden_leaks,
     )
 
 
@@ -177,12 +192,13 @@ def build_certificate(
     if result.passed:
         detail = (
             f"All {result.checked_values} redacted value(s) verified absent "
-            "from the output text layer."
+            "from the output text layer, metadata and annotations."
         )
     else:
         detail = (
             f"LEAK: {result.literal_leaks} value(s) still extractable, "
-            f"{result.residual_detections} detector re-hit(s) across "
+            f"{result.residual_detections} detector re-hit(s), "
+            f"{result.hidden_leaks} on metadata/annotations, across "
             f"type(s): {', '.join(result.leaked_types)}."
         )
 

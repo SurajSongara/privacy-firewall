@@ -243,3 +243,44 @@ class TestDocumentState:
 
         with open_document(stream=data) as opened:
             assert len(list(opened)) == 3
+
+
+class TestHiddenSurfaces:
+    """Metadata and annotations — text outside the page content stream."""
+
+    def _pdf_with_hidden(self) -> bytes:
+        doc = fitz.open()
+        page = doc.new_page(width=400, height=300)
+        page.insert_text((50, 50), "on page", fontsize=12)
+        doc.set_metadata({"author": "Ravi Sharma", "keywords": "9876543210"})
+        page.add_text_annot((200, 50), "note 9876543210")
+        data: bytes = doc.tobytes()
+        doc.close()
+        return data
+
+    def test_metadata_excludes_producer_noise(self) -> None:
+        with open_document(stream=self._pdf_with_hidden()) as doc:
+            meta = doc.metadata()
+        assert meta.get("Author") == "Ravi Sharma"
+        assert meta.get("Keywords") == "9876543210"
+        assert "Producer" not in meta
+
+    def test_annotation_text_and_rect_are_exposed(self) -> None:
+        with open_document(stream=self._pdf_with_hidden()) as doc:
+            annots = doc[0].annotations()
+        assert any("9876543210" in a.text for a in annots)
+        assert all(not a.rect.is_empty for a in annots)
+
+    def test_sanitise_drops_metadata_and_annotations(self) -> None:
+        with open_document(stream=self._pdf_with_hidden()) as doc:
+            cleaned = doc.tobytes(sanitize=True)
+        with open_document(stream=cleaned) as out:
+            assert out.metadata() == {}
+            assert out[0].annotations() == []
+
+    def test_default_save_is_not_sanitised(self) -> None:
+        # Annotations survive a plain round-trip; only redaction sanitises.
+        with open_document(stream=self._pdf_with_hidden()) as doc:
+            plain = doc.tobytes()
+        with open_document(stream=plain) as out:
+            assert out[0].annotations()
