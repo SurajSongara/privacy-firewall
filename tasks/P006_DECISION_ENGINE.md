@@ -1,3 +1,0 @@
-# P006_DECISION_ENGINE
-
-Create `engine/decision.py::DecisionEngine` — `(Document, FusionResult, Policy) → ReviewPlan`. ReviewPlan is a JSON-serializable pydantic model: source file path + hash, policy name, and one entry per detection: `detection_id`, type, text, page, span, bbox, confidence, reasons, `suggested_action` (redact/keep/ask, from policy + confidence band), `decision` (initially null; filled by user review or `--yes`). Round-trip serialization (`model_dump_json` / load) with schema version field. A ReviewPlan where every `decision` is null and `--yes` is given resolves to suggested actions. This file is the contract between engine, CLI, and the future UI.

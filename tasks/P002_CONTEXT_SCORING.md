@@ -1,3 +1,0 @@
-# P002_CONTEXT_SCORING
-
-Create `engine/context.py` — a post-detection, pre-fusion pass that adjusts confidence using surrounding text. Per detection type, define positive label lexicons (e.g. "aadhaar", "uid" near a 12-digit number promotes Aadhaar; "a/c no", "account number" promotes Account) and negative lexicons ("utr", "ref no", "txn", "transaction id" demotes Aadhaar/Phone/Account). Search the same line first, then the containing block, then vertically adjacent blocks (use layout analyzer output where available). Every adjustment appends a reason (P001). Confidence stays clamped to [0,1]; detections demoted below a floor (default 0.3) are dropped. Pure function: `(Document, list[Detection]) → list[Detection]`. Unit tests with synthetic label/value fixtures.

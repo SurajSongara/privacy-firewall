@@ -31,13 +31,13 @@ mypy src/                                               # strict mode, pydantic 
 
 Python `>=3.12` is required (project runs on 3.14). CLI script entry point is `privacy-firewall = "privacy_firewall.__main__:entry_point"`.
 
-## Workflow rules (from `.ai/WORKFLOW_RULES.md`)
+## Workflow rules
 
-- Work exclusively on the `dev` branch — never push directly to `main`.
-- Every task ships as a PR from `dev` → `main`; do **not** merge without explicit user approval.
+- Work on a feature branch off `dev` — never push directly to `main`.
+- Every task ships as a PR; do **not** merge without explicit user approval.
 - If a force push closes an existing PR, open a new one.
 
-## Engine rules (from `.ai/ENGINE_RULES.md`)
+## Engine rules
 
 - Deterministic before AI; regex beats LLM; LLM is optional.
 - Engine has no framework dependencies — CLI is a thin wrapper around engine components (zero business logic in `cli/`).
@@ -91,6 +91,5 @@ Module map (see `AGENTS.md` for the full per-file reference — it is the source
 ## Notes for future sessions
 
 - `AGENTS.md` is a hand-maintained deep-dive reference generated from the source; consult it before changing architecture but assume drift is possible — verify against code.
-- `.ai/CURRENT_STATE.md` tracks phase status; `tasks/` contains one markdown file per task (Phases 1–3 complete; Phase 4 “Trust & Recall Pack” F001–F005 is pending). Update `CURRENT_STATE.md` when finishing a task.
-- Known false positives on `TestFiles/statement1-5.pdf`: the Aadhaar (Verhoeff + first-digit) and Email (TLD allowlist) FP classes were fixed in P003; the remaining one is Phone catching 10-digit UTR/bank refs (75% precision) — pending as `tasks/F002_PHONE_PRECISION.md`.
+- Known false positives on synthetic corpora: the Aadhaar (Verhoeff + first-digit) and Email (TLD allowlist) FP classes are fixed; the remaining known one is Phone catching 10-digit UTR/bank refs (~75% precision on adversarial inputs).
 - Default OCR engine is resolved deterministically in `ocr/__init__.py`: the `PRIVACY_FIREWALL_OCR_ENGINE` env var wins, else preference order `rapidocr > tesseract > paddleocr`, skipping engines whose `is_available()` backend check fails. `paddlepaddle` has no wheel for Python 3.14, so `paddleocr` registers but reports unavailable. The `ocr-lite` extra installs `rapidocr-onnxruntime` (pure wheels, models bundled) — the recommended backend for packaged builds.
