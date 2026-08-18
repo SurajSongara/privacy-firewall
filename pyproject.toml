@@ -6,12 +6,43 @@ build-backend = "setuptools.build_meta"
 name = "privacy-firewall"
 version = "0.1.0"
 description = "Offline-first PII Detection & Redaction Engine"
+readme = "README.md"
+authors = [{ name = "Suraj Songara" }]
+keywords = [
+    "pii",
+    "redaction",
+    "privacy",
+    "pdf",
+    "ocr",
+    "aadhaar",
+    "pan",
+    "gstin",
+    "data-protection",
+    "anonymization",
+]
 requires-python = ">=3.12"
 # The engine no longer links any copyleft component: PDFium and pypdfium2 are
 # BSD-3-Clause/Apache-2.0 and Pillow is MIT-CMU, so this licence is now a free
 # choice rather than an obligation inherited from PyMuPDF. See packaging/README.md.
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Legal Industry",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Text Processing :: General",
+    "Topic :: Office/Business",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2",
     "pypdfium2>=5",
@@ -53,6 +84,12 @@ dev = [
     "pymupdf>=1.24",
 ]
 
+[project.urls]
+Homepage = "https://github.com/SurajSongara/privacy-firewall"
+Repository = "https://github.com/SurajSongara/privacy-firewall"
+Issues = "https://github.com/SurajSongara/privacy-firewall/issues"
+Changelog = "https://github.com/SurajSongara/privacy-firewall/blob/main/CHANGELOG.md"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -62,7 +99,7 @@ privacy-firewall = "privacy_firewall.__main__:entry_point"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["TestFiles", "tasks", "examples", "benchmarks", ".ai", ".claude"]
+extend-exclude = ["TestFiles", "examples", "benchmarks", ".claude"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

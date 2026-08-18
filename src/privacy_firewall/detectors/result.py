@@ -1,3 +1,5 @@
+"""Detector-run result types -- per-detector timing and the aggregated result."""
+
 from __future__ import annotations
 
 import time
