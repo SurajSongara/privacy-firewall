@@ -2,7 +2,7 @@
 
 **Offline-first PII detection & redaction for documents.**
 
-[![CI](https://github.com/SurajSongara/privacy-firewall-starter-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/SurajSongara/privacy-firewall-starter-kit/actions/workflows/ci.yml)
+[![CI](https://github.com/SurajSongara/privacy-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/SurajSongara/privacy-firewall/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Tests](https://img.shields.io/badge/tests-723%20passing-brightgreen)
 ![Type-checked](https://img.shields.io/badge/mypy-strict-blue)
@@ -44,7 +44,7 @@ Every `--certificate` run produces a one-page PDF (and matching JSON) you can ha
 ### Desktop app (no Python needed)
 
 Download the installer for your platform from the
-[latest release](https://github.com/SurajSongara/privacy-firewall-starter-kit/releases):
+[latest release](https://github.com/SurajSongara/privacy-firewall/releases):
 
 | Platform | File | Notes |
 |---|---|---|
@@ -67,8 +67,8 @@ CLI: `PrivacyFirewall detect statement.pdf`.
 Requires **Python ≥ 3.12**.
 
 ```bash
-git clone https://github.com/SurajSongara/privacy-firewall-starter-kit.git
-cd privacy-firewall-starter-kit
+git clone https://github.com/SurajSongara/privacy-firewall.git
+cd privacy-firewall
 pip install -e ".[ui,ocr-lite]"
 ```
 

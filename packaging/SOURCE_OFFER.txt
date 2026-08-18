@@ -16,7 +16,7 @@ WHERE TO GET THE SOURCE
 The complete corresponding source code for this application, including the build
 scripts used to produce this binary, is published at:
 
-    https://github.com/SurajSongara/privacy-firewall-starter-kit
+    https://github.com/SurajSongara/privacy-firewall
 
 Each released binary is built from a tagged commit in that repository; the tag
 matches the version shown by "Privacy Firewall --version".
