@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from privacy_firewall.detectors.base import BaseDetector
-from privacy_firewall.detectors.utils import is_exact_duplicate, is_in_slash_token
+from privacy_firewall.detectors.utils import is_in_slash_token, overlaps_taken
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
@@ -93,6 +93,13 @@ class AccountDetector(BaseDetector):
                     and LABEL_BLOCK_SUFFIX.search(prev_text_block.text) is not None
                 )
 
+                # Spans already emitted in this block. The keyword and standalone
+                # passes both match a labelled number, so this drops the second
+                # pass's re-match of the same occurrence while keeping a genuine
+                # repeat of the account elsewhere (header vs. footer), which must
+                # also be redacted.
+                taken: list[tuple[int, int]] = []
+
                 # First, find accounts with explicit keywords
                 for match in ACCOUNT_KEYWORDS.finditer(block.text):
                     # Get the number after the keyword
@@ -102,13 +109,13 @@ class AccountDetector(BaseDetector):
                         account = num_match.group(1)
                         if not self._validate_account(account):
                             continue
-                        if is_exact_duplicate(detections, account):
-                            continue
 
                         # Calculate span for the account number only
                         account_start = match.end() + num_match.start()
                         account_end = match.end() + num_match.end()
 
+                        if overlaps_taken(taken, account_start, account_end):
+                            continue
                         if self._is_ledger_line_marker(block.text, account_end):
                             continue
                         if is_in_slash_token(block.text, account_start, account_end):
@@ -135,14 +142,16 @@ class AccountDetector(BaseDetector):
                                 ),
                             )
                         )
+                        taken.append((account_start, account_end))
 
-                # Then, find standalone account numbers (11-15 digits)
-                # Only if they're not already detected with keywords
+                # Then, find standalone account numbers (11-15 digits).
+                # The overlap check skips ones already emitted by the keyword
+                # pass above; a repeat elsewhere in the block is still kept.
                 for match in STANDALONE_ACCOUNT_PATTERN.finditer(block.text):
                     account = match.group(1)
                     if not self._validate_account(account):
                         continue
-                    if is_exact_duplicate(detections, account):
+                    if overlaps_taken(taken, match.start(1), match.end(1)):
                         continue
 
                     # Skip if this number appears right after an IFSC
@@ -181,6 +190,7 @@ class AccountDetector(BaseDetector):
                             ),
                         )
                     )
+                    taken.append((match.start(1), match.end(1)))
 
                 prev_text_block = block
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from privacy_firewall.detectors.base import BaseDetector
-from privacy_firewall.detectors.utils import is_exact_duplicate
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
@@ -79,8 +78,9 @@ class UpiDetector(BaseDetector):
                     upi_id = match.group()
                     if not self._validate_format(upi_id):
                         continue
-                    if is_exact_duplicate(detections, upi_id):
-                        continue
+                    # Each match is a distinct on-page occurrence (one
+                    # non-overlapping pattern), so all are kept: a repeated UPI
+                    # ID must be redacted everywhere it appears.
 
                     match_bbox = (
                         block.bbox_for_span(match.start(), match.end())

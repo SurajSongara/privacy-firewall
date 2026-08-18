@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 from privacy_firewall.detectors.base import BaseDetector
-from privacy_firewall.detectors.utils import is_exact_duplicate
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
@@ -85,8 +84,9 @@ class IFSCDetector(BaseDetector):
                     ifsc = match.group(1)
                     if not self._validate_format(ifsc):
                         continue
-                    if is_exact_duplicate(detections, ifsc):
-                        continue
+                    # Every match is a distinct on-page occurrence (a single
+                    # non-overlapping pattern), so all are kept: a repeated IFSC
+                    # must be redacted at each place it appears.
 
                     reasons = ["matches IFSC format (bank code + '0' + branch code)"]
                     if ifsc[:4] in KNOWN_BANK_CODES:

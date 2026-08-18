@@ -90,7 +90,10 @@ class TestAccountDetector:
         result = self.detector.scan(doc)
         assert result == []
 
-    def test_deduplicates_same_account(self) -> None:
+    def test_keeps_both_occurrences_of_same_account(self) -> None:
+        # Two occurrences of the same account on the page are two things to
+        # redact; collapsing them leaves the second in the output.
         doc = Document(pages=[_page("Account: 40798662399 and again 40798662399")])
         result = self.detector.scan(doc)
-        assert len(result) == 1
+        assert len(result) == 2
+        assert all(r.text == "40798662399" for r in result)

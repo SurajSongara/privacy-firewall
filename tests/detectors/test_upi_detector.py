@@ -78,10 +78,12 @@ class TestUpiDetector:
         result = self.detector.scan(doc)
         assert result == []
 
-    def test_deduplicates_same_upi_id(self) -> None:
+    def test_keeps_both_occurrences_of_same_upi_id(self) -> None:
+        # Both occurrences are on the page and must each be redacted.
         doc = Document(pages=[_page("Send to user@ybl or user@ybl")])
         result = self.detector.scan(doc)
-        assert len(result) == 1
+        assert len(result) == 2
+        assert all(r.text == "user@ybl" for r in result)
 
     def test_rejects_double_at(self) -> None:
         doc = Document(pages=[_page("UPI: user@@ybl")])
