@@ -84,10 +84,21 @@ class TestAadhaarDetector:
         assert len(result) == 1
         assert result[0].text == "226251716424"
 
-    def test_deduplicates_continuous_and_formatted(self) -> None:
-        doc = Document(pages=[_page("Number: 226251716424 and 2262 5171 6424 are same")])
+    def test_same_occurrence_not_double_counted(self) -> None:
+        # A single continuous occurrence is matched by both the formatted and
+        # continuous patterns; it must be emitted once, not twice.
+        doc = Document(pages=[_page("Aadhaar: 226251716424")])
         result = self.detector.scan(doc)
         assert len(result) == 1
+
+    def test_keeps_both_occurrences_of_same_value(self) -> None:
+        # The same Aadhaar written plainly and in canonical spaced form are two
+        # distinct occurrences on the page — both must be detected so both get
+        # redacted. Collapsing them to one leaves the second on the page.
+        doc = Document(pages=[_page("Number: 226251716424 and 2262 5171 6424 are same")])
+        result = self.detector.scan(doc)
+        assert len(result) == 2
+        assert all(r.text == "226251716424" for r in result)
 
     def test_bbox_populated(self) -> None:
         bbox = BoundingBox(x0=10.0, y0=20.0, x1=300.0, y1=50.0)

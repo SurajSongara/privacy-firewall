@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,9 @@ class PDFRenderer:
             jobs: list[tuple[Rect, RedactionType, str]] = []
             highlights: list[Rect] = []
             seen: set[tuple[float, float, float, float]] = set()
+            # How often each value appears on this page — decides whether a
+            # failed clip search may fall back to a whole-page text search.
+            text_counts = Counter(r.detection.text for r in page_redactions)
             for redaction in page_redactions:
                 bbox_rect = Rect(
                     redaction.bbox.x0,
@@ -140,10 +144,22 @@ class PDFRenderer:
                 )
                 rects = page.search_for(redaction.detection.text, clip=clip)
                 if not rects:
-                    # Imprecise bbox (e.g. OCR geometry offset from the native
-                    # text layer): search the whole page but keep only the match
-                    # nearest this detection's bbox.
-                    matches = page.search_for(redaction.detection.text)
+                    # The clip search missed. If this value is unique on the page,
+                    # an imprecise bbox (e.g. OCR offset, or a kerned run the clip
+                    # doesn't bound) is the likely cause, so a whole-page search
+                    # snapped to the nearest match recovers it. But when the value
+                    # appears more than once on the page, a whole-page search is
+                    # ambiguous: the clip may have missed *this* instance only
+                    # because it is rendered differently from its normalised form
+                    # (the spaced ``8625 8314 2918`` vs. the stored
+                    # ``862583142918``), and the nearest match would be a *twin*
+                    # elsewhere — redacting it would leave this instance on the
+                    # page. There, the detection's own bbox is the reliable target.
+                    matches = (
+                        page.search_for(redaction.detection.text)
+                        if text_counts[redaction.detection.text] == 1
+                        else []
+                    )
                     if matches:
                         cx = (bbox_rect.x0 + bbox_rect.x1) / 2
                         cy = (bbox_rect.y0 + bbox_rect.y1) / 2
