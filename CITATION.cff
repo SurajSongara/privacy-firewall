@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "Privacy Firewall"
+message: "If you use this software, please cite it using these metadata."
+type: software
+authors:
+  - given-names: Suraj
+    family-names: Songara
+repository-code: "https://github.com/SurajSongara/privacy-firewall"
+abstract: >-
+  Offline-first PII detection and redaction engine for PDFs, images, and text
+  documents. Deterministic (regex + checksum) detectors, true content-stream
+  redaction, and a self-verifying audit certificate — all running locally.
+keywords:
+  - pii
+  - redaction
+  - privacy
+  - pdf
+  - ocr
+license: AGPL-3.0-only
+version: "0.1.0"

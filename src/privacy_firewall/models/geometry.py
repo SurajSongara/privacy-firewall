@@ -1,3 +1,5 @@
+"""Geometry primitives -- ``BoundingBox`` and ``Span`` in top-left coordinate space."""
+
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
 

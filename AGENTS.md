@@ -269,7 +269,7 @@ class TesseractOCRAdapter(OCRProvider):
 ```
 
 **Key implementation details:**
-- `fitz.open()` → render page to pixmap at DPI → `PILImage.open()` → `engine.SetImage()` → `engine.Recognize()`
+- `open_pdf()` → `page.get_pixmap(dpi=…)` (PDFium shim in `pdfium_compat`) → PIL image → `engine.SetImage()` → `engine.Recognize()`
 - `engine.GetIterator()` → `GetUTF8Text(RIL.TEXTLINE)` per line
 - `BoundingBox()` returns `(x1, y1, x2, y2)` in pixel coords
 - Scale factor: `dpi / 72.0` (PDF points vs pixels)
@@ -601,7 +601,7 @@ tests/
 - `_safe()` helper in CLI sanitizes output
 
 ### Test Count
-- 401 tests, 1 pre-existing failure (PaddleOCR test)
+- 723 tests, all passing (`pytest`); strict `mypy` and `ruff` clean
 
 ---
 

@@ -1,3 +1,5 @@
+"""Frozen Pydantic v2 data models -- the shared vocabulary of the engine."""
+
 from privacy_firewall.models.blocks import Block, BlockType, ImageBlock, TableBlock, TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document, Page

@@ -1,3 +1,5 @@
+"""Detector for UPI payment IDs (``local@handle``), scored against known handles."""
+
 from __future__ import annotations
 
 import re

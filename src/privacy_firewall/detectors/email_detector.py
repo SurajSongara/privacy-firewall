@@ -1,3 +1,5 @@
+"""Detector for email addresses, gated by a TLD allowlist to suppress false positives."""
+
 from __future__ import annotations
 
 import re

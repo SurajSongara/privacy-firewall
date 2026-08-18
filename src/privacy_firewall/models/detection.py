@@ -1,3 +1,5 @@
+"""``Detection``: one located PII finding -- evidence, span, bbox and confidence."""
+
 from __future__ import annotations
 
 import hashlib

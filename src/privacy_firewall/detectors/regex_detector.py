@@ -1,3 +1,5 @@
+"""``RegexDetector``: a reusable detector driven by patterns and a validation hook."""
+
 from __future__ import annotations
 
 import re

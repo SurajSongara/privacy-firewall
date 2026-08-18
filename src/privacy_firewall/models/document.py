@@ -1,3 +1,5 @@
+"""``Document`` and ``Page``: the parsed structure every pipeline stage exchanges."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, field_validator

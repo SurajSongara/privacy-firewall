@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a redaction leak or security issue (private)
+    url: https://github.com/SurajSongara/privacy-firewall/security/advisories/new
+    about: Please report leaks and vulnerabilities privately, not as public issues. See SECURITY.md.

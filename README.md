@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/SurajSongara/privacy-firewall-starter-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/SurajSongara/privacy-firewall-starter-kit/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
-![Tests](https://img.shields.io/badge/tests-721%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-723%20passing-brightgreen)
 ![Type-checked](https://img.shields.io/badge/mypy-strict-blue)
 ![Lint](https://img.shields.io/badge/lint-ruff-black)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
@@ -31,7 +31,7 @@ Most "redaction" tools draw a black box over the text — the words are still in
 - **Workspace memory** — mark a term once with "remember", and it's flagged in every document in the workspace
 - **OCR for scans** — RapidOCR / Tesseract / PaddleOCR backends with automatic native-vs-OCR-vs-hybrid pipeline selection
 - **Multi-format** — PDFs natively; images (PNG, JPG, TIFF, BMP, WebP, GIF), TXT, MD, and DOCX are converted on upload
-- **Deterministic engine** — regex + validators before any AI; fully offline, reproducible, and covered by **721 tests** with strict `mypy` and `ruff`
+- **Deterministic engine** — regex + validators before any AI; fully offline, reproducible, and covered by **723 tests** with strict `mypy` and `ruff`
 
 ## The certificate — proof, not promises
 
@@ -255,18 +255,27 @@ src/privacy_firewall/
 benchmarks/            # Precision benchmark vs. golden synthetic corpus
 examples/synthetic/    # Golden dataset (all values fabricated)
 packaging/             # PyInstaller + Inno Setup desktop-installer build
-tests/                 # 721 tests (pytest)
+tests/                 # 723 tests (pytest)
 ```
 
 ## Development
 
 ```bash
 pip install -e ".[dev,ui]"
-pytest                      # full suite (721 tests)
+pytest                      # full suite (723 tests)
 ruff check src/ tests/      # lint
 mypy src/                   # strict type-checking
 python -m benchmarks.precision   # precision/recall vs. the golden corpus
 ```
+
+## Contributing
+
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup,
+conventions, and how to add a detector; [`AGENTS.md`](AGENTS.md) is the full
+per-module reference. Please review the [`Code of Conduct`](CODE_OF_CONDUCT.md).
+Found a case where redacted output still leaks a value? Report it **privately** —
+see [`SECURITY.md`](SECURITY.md). Notable changes are tracked in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## Privacy
 

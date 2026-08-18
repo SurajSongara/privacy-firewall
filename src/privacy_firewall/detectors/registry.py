@@ -1,3 +1,5 @@
+"""``DetectorRegistry``: runs detectors over a Document and collects timed results."""
+
 from __future__ import annotations
 
 from privacy_firewall.detectors.base import BaseDetector

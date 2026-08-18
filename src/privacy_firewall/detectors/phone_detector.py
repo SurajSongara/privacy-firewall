@@ -1,3 +1,5 @@
+"""Detector for phone numbers -- Indian mobile and common international formats."""
+
 from __future__ import annotations
 
 import re

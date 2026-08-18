@@ -1,3 +1,5 @@
+"""Detector for Indian Aadhaar (12-digit UIDAI) numbers, Verhoeff-validated."""
+
 from __future__ import annotations
 
 import re
