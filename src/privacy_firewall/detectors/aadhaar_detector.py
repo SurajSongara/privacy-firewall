@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from privacy_firewall.detectors.base import BaseDetector
-from privacy_firewall.detectors.utils import is_in_slash_token
+from privacy_firewall.detectors.utils import is_in_slash_token, overlaps_taken
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document, Page
@@ -109,7 +109,7 @@ class AadhaarDetector(BaseDetector):
             return
         if is_in_slash_token(block.text, match.start(), match.end()):
             return
-        if any(match.start() < end and start < match.end() for start, end in taken):
+        if overlaps_taken(taken, match.start(), match.end()):
             return
 
         match_bbox = (

@@ -40,6 +40,28 @@ def is_containment_duplicate(detections: list[Detection], normalized: str) -> bo
     return False
 
 
+def overlaps_taken(taken: list[tuple[int, int]], start: int, end: int) -> bool:
+    """Return ``True`` if ``[start, end)`` overlaps a span already emitted.
+
+    Detectors run several patterns over the *same* block text, so one physical
+    occurrence can be matched more than once (e.g. ``+91-9876543210`` by the
+    ``+``-prefixed pattern and ``9876543210`` by the bare-10-digit pattern).
+    Tracking the spans already taken *within a block* lets a detector drop those
+    redundant re-matches while still keeping a genuine second occurrence of the
+    same value elsewhere — which must be redacted too. ``taken`` is per block,
+    since detection spans are block-relative and not comparable across blocks.
+
+    Args:
+        taken: ``(start, end)`` spans already emitted for the current block.
+        start: Candidate match start (block-relative).
+        end: Candidate match end (block-relative).
+
+    Returns:
+        ``True`` if the candidate overlaps any span in *taken*.
+    """
+    return any(start < t_end and t_start < end for t_start, t_end in taken)
+
+
 def is_in_slash_token(text: str, start: int, end: int) -> bool:
     """Return ``True`` if the match sits inside a slash-delimited token.
 

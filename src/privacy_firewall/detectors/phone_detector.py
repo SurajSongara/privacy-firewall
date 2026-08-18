@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from privacy_firewall.detectors.base import BaseDetector
-from privacy_firewall.detectors.utils import is_containment_duplicate, is_in_slash_token
+from privacy_firewall.detectors.utils import is_in_slash_token, overlaps_taken
 from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
@@ -49,6 +49,11 @@ class PhoneDetector(BaseDetector):
                 if not isinstance(block, TextBlock):
                     continue
 
+                # Spans already emitted in this block. The formats overlap (a
+                # ``+91-`` number is also a bare 10-digit run), so this drops the
+                # redundant re-match of one occurrence while keeping a genuine
+                # repeat of the same number elsewhere on the page.
+                taken: list[tuple[int, int]] = []
                 for pattern in PHONE_PATTERNS:
                     for match in pattern.finditer(block.text):
                         raw = match.group()
@@ -56,8 +61,7 @@ class PhoneDetector(BaseDetector):
                             continue
                         if is_in_slash_token(block.text, match.start(), match.end()):
                             continue
-                        normalized = re.sub(r"[^\d]", "", raw)
-                        if is_containment_duplicate(detections, normalized):
+                        if overlaps_taken(taken, match.start(), match.end()):
                             continue
 
                         match_bbox = (
@@ -78,6 +82,7 @@ class PhoneDetector(BaseDetector):
                                 reasons=self._resolve_reasons(raw),
                             )
                         )
+                        taken.append((match.start(), match.end()))
 
         return detections
 

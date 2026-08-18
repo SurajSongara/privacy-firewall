@@ -100,10 +100,19 @@ class TestPhoneDetector:
         result = self.detector.scan(doc)
         assert result == []
 
-    def test_deduplicates_same_number_different_formats(self) -> None:
-        doc = Document(pages=[_page("Number: 9876543210 and 98765 43210 refer to same")])
+    def test_same_occurrence_matched_by_two_formats_counted_once(self) -> None:
+        # One "+91-9876543210" is matched by both the +prefixed and the bare
+        # 10-digit pattern; the overlapping re-match must not double-count it.
+        doc = Document(pages=[_page("Call +91-9876543210 today")])
         result = self.detector.scan(doc)
         assert len(result) == 1
+
+    def test_keeps_both_occurrences_of_same_number(self) -> None:
+        # The same number in two places (differently formatted) is two things
+        # to redact; collapsing them leaves the second in the output.
+        doc = Document(pages=[_page("Number: 9876543210 and 98765 43210 refer to same")])
+        result = self.detector.scan(doc)
+        assert len(result) == 2
 
     def test_phone_at_start(self) -> None:
         doc = Document(pages=[_page("9876543210 is my number")])
