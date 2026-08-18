@@ -66,6 +66,13 @@ jobs:
       - name: Build bundle
         run: pyinstaller --clean --noconfirm packaging/privacy_firewall.spec
 
+      # PyMuPDF builds the synthetic smoke-test fixtures on the CI host. It is a
+      # test-only tool, deliberately excluded from the frozen bundle, so it is
+      # installed *after* the PyInstaller build to keep it out of the artifact.
+      - name: Install smoke-test tooling
+        shell: bash
+        run: pip install "pymupdf>=1.24"
+
       - name: Smoke-test the frozen binary
         shell: bash
         run: python packaging/smoke_test.py "${{ matrix.binary }}"
