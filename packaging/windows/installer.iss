@@ -14,7 +14,7 @@
 
 #define AppName "Privacy Firewall"
 #define AppPublisher "Privacy Firewall"
-#define AppURL "https://github.com/SurajSongara/privacy-firewall-starter-kit"
+#define AppURL "https://github.com/SurajSongara/privacy-firewall"
 #define AppExeName "PrivacyFirewall.exe"
 
 [Setup]
