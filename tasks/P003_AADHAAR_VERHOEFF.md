@@ -1,3 +1,0 @@
-# P003_AADHAAR_VERHOEFF
-
-Fix the known false-positive classes on TestFiles/statement1-5.pdf. Aadhaar: implement Verhoeff checksum validation — checksum pass raises confidence, fail demotes hard (a 12-digit string failing Verhoeff in a transaction-context line is dropped). Also enforce structural rules: first digit 2–9, not part of a longer digit run. Phone: demote 10-digit numbers that fail mobile prefix rules (6-9 start) or sit in txn-ref context (uses P002 lexicons). Email: reject OCR artifacts (e.g. `30524@sbi.coin`) via TLD allowlist + local-part sanity. Acceptance: the documented FPs on statement1-5.pdf disappear, true positives on the test suite remain.

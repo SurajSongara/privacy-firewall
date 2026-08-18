@@ -97,7 +97,11 @@ class TestReviewSession:
             _ = session.document
         session.run()
         assert session.is_ready
-        assert session.status_payload() == {"status": "ready", "detail": ""}
+        assert session.status_payload() == {
+            "status": "ready",
+            "detail": "",
+            "needs_password": False,
+        }
         assert session.plan.entries
 
     def test_lazy_session_records_error(self, tmp_path: Path) -> None:

@@ -6,33 +6,38 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from privacy_firewall.models.blocks import Block, ImageBlock, TextBlock, TextSpan
 from privacy_firewall.models.document import Document, Page
 from privacy_firewall.models.geometry import BoundingBox
+from privacy_firewall.parsers.pdf_open import open_pdf
 
 WordTuple = tuple[float, float, float, float, str, int, int, int]
-"""Type of each word tuple returned by PyMuPDF's ``get_text("words")``."""
+"""Type of each word tuple returned by ``get_text("words")``."""
 
 
 class PDFParser:
-    """Parser that extracts text and image blocks from PDF files using PyMuPDF."""
-    def __init__(self, file_path: str | Path) -> None:
+    """Parser that extracts text and image blocks from PDF files."""
+    def __init__(self, file_path: str | Path, password: str | None = None) -> None:
         """Initialize the parser with a path to a PDF file.
 
         Args:
             file_path: Path to the PDF file.
+            password: Password for an encrypted PDF, if required.
         """
         self._path = Path(file_path)
+        self._password = password
 
     def parse(self) -> Document:
         """Parse the PDF file and return a structured Document.
 
         Returns:
             A Document containing all pages with their text and image blocks.
+
+        Raises:
+            EncryptedPDFError: If the PDF is password-protected and no
+                correct password was supplied.
         """
-        doc = fitz.open(str(self._path))
+        doc = open_pdf(self._path, password=self._password)
         pages: list[Page] = []
 
         for page_num in range(len(doc)):
@@ -53,16 +58,21 @@ class PDFParser:
         return Document(pages=pages)
 
     @staticmethod
-    def parse_bytes(data: bytes) -> Document:
+    def parse_bytes(data: bytes, password: str | None = None) -> Document:
         """Parse PDF content from raw bytes and return a structured Document.
 
         Args:
             data: Raw PDF bytes.
+            password: Password for an encrypted PDF, if required.
 
         Returns:
             A Document containing all pages with their text and image blocks.
+
+        Raises:
+            EncryptedPDFError: If the PDF is password-protected and no
+                correct password was supplied.
         """
-        doc = fitz.open(stream=data, filetype="pdf")
+        doc = open_pdf(stream=data, password=password)
         pages: list[Page] = []
 
         for page_num in range(len(doc)):
@@ -95,7 +105,7 @@ class PDFParser:
         Image blocks are extracted from ``get_text("dict")`` as before.
 
         Args:
-            raw: Raw page data as returned by PyMuPDF's ``get_text("dict")``.
+            raw: Raw page data as returned by ``get_text("dict")``.
             words_data: Word-level data from ``get_text("words")``.
             page_number: The 1-based page number.
 
@@ -111,7 +121,7 @@ class PDFParser:
             block_words.setdefault(block_no, []).append(w)
 
         # Map dict block bboxes to words using spatial proximity
-        # PyMuPDF's get_text("words") uses different block numbering than get_text("dict")
+        # get_text("words") uses different block numbering than get_text("dict")
         for item in raw.get("blocks", []):
             item_typed: dict[str, Any] = item
             bbox = BoundingBox(

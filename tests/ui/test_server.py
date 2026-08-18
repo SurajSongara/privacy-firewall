@@ -29,6 +29,55 @@ def client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(session))
 
 
+def _wait_ready(client: TestClient, timeout: float = 30.0) -> str:
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = client.get("/api/status").json()["status"]
+        if status in ("ready", "error"):
+            return str(status)
+        time.sleep(0.1)
+    return "timeout"
+
+
+class TestUnlockEndpoint:
+    @pytest.fixture
+    def locked_client(self, tmp_path: Path) -> TestClient:
+        path = tmp_path / "locked.pdf"
+        doc = fitz.open()
+        doc.new_page().insert_text((50, 100), "PAN: ABCPE1234F", fontsize=12)
+        doc.save(
+            str(path), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="secret", owner_pw="secret"
+        )
+        doc.close()
+        session = ReviewSession(path, BUILTIN_POLICIES["share-with-ai"], lazy=True)
+        from privacy_firewall.parsers.pdf_open import EncryptedPDFError
+
+        with pytest.raises(EncryptedPDFError):
+            session.run()
+        return TestClient(create_app(session))
+
+    def test_status_reports_needs_password(self, locked_client: TestClient) -> None:
+        status = locked_client.get("/api/status").json()
+        assert status["status"] == "error"
+        assert status["needs_password"] is True
+
+    def test_unlock_with_correct_password_becomes_ready(self, locked_client: TestClient) -> None:
+        resp = locked_client.post("/api/unlock", json={"password": "secret"})
+        assert resp.status_code == 200
+        assert _wait_ready(locked_client) == "ready"
+        plan = locked_client.get("/api/plan").json()
+        assert any(e["text"] == "ABCPE1234F" for e in plan["entries"])
+
+    def test_unlock_with_wrong_password_still_needs_password(
+        self, locked_client: TestClient
+    ) -> None:
+        locked_client.post("/api/unlock", json={"password": "wrong"})
+        assert _wait_ready(locked_client) == "error"
+        assert locked_client.get("/api/status").json()["needs_password"] is True
+
+
 class TestReviewServer:
     def test_index_serves_html(self, client: TestClient) -> None:
         response = client.get("/")
@@ -153,7 +202,11 @@ class TestReviewServer:
         assert response.content[:4] == b"%PDF"
 
     def test_status_ready(self, client: TestClient) -> None:
-        assert client.get("/api/status").json() == {"status": "ready", "detail": ""}
+        assert client.get("/api/status").json() == {
+            "status": "ready",
+            "detail": "",
+            "needs_password": False,
+        }
 
     def test_preview_png(self, client: TestClient) -> None:
         response = client.get("/api/preview/1")

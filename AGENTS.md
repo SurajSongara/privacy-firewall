@@ -20,7 +20,8 @@
 ### Core Dependencies
 ```
 pydantic>=2        — Frozen data models
-pymupdf>=1.24      — PDF parsing, rendering, destructive redaction
+pypdfium2>=5       — PDF parsing, rendering, destructive redaction (PDFium)
+pillow>=10         — Raster decode/encode for page images and scans
 typer>=0.12        — CLI framework
 ```
 
@@ -52,7 +53,7 @@ PDF IN
 ```
 
 ### Pipeline Modes
-1. **Native** — PyMuPDF extracts text directly from PDF content stream
+1. **Native** — PDFium extracts text directly from PDF content stream
 2. **OCR** — Render pages to images, run Tesseract/PaddleOCR
 3. **Hybrid** — Native + OCR merged (IoU deduplication)
 
@@ -81,15 +82,16 @@ src/privacy_firewall/
 │   ├── detection.py            — Detection
 │   └── document.py             — Page, Document
 ├── parsers/
-│   └── pdf_parser.py           — PDFParser (PyMuPDF)
+│   ├── pdf_parser.py           — PDFParser (PDFium via pdfium_compat)
+│   └── pdfium_compat.py        — PDFium read API + coordinate flip
 ├── ocr/
 │   ├── __init__.py             — Registry singleton, auto-registration
 │   ├── provider.py             — OCRProvider ABC
 │   ├── registry.py             — OCRProviderRegistry
 │   └── adapters/
 │       ├── __init__.py         — Exports both adapters
-│       ├── tesseract.py        — TesseractOCRAdapter (tesserocr + PyMuPDF)
-│       └── paddle.py           — PaddleOCRAdapter (paddleocr + PyMuPDF)
+│       ├── tesseract.py        — TesseractOCRAdapter (tesserocr + PDFium)
+│       └── paddle.py           — PaddleOCRAdapter (paddleocr + PDFium)
 ├── detectors/
 │   ├── __init__.py             — Exports all detectors + registry
 │   ├── base.py                 — BaseDetector ABC
@@ -212,7 +214,7 @@ class PDFParser:
 ```
 
 **Strategy:**
-- Uses `fitz.open()` (PyMuPDF)
+- Uses `open_pdf()` (PDFium via `pdfium_compat`)
 - `page.get_text("dict")` for block-level structure
 - `page.get_text("words")` for per-word bounding boxes
 - Groups words by `block_no` → creates `TextSpan` per word
@@ -261,7 +263,7 @@ class TesseractOCRAdapter(OCRProvider):
     name = "tesseract"
 
     def __init__(self, dpi=200, lang="eng", tessdata_path=None)
-    # Uses tesserocr.PyTessBaseAPI + PyMuPDF for PDF→image→OCR
+    # Uses tesserocr.PyTessBaseAPI + PDFium for PDF→image→OCR
     # DPI 200 default, coordinate scaling: pixel / (dpi/72.0)
     # Confidence normalized from 0-100 to 0-1
 ```
@@ -279,7 +281,7 @@ class PaddleOCRAdapter(OCRProvider):
     name = "paddleocr"
 
     def __init__(self, dpi=200, lang="en", use_angle_cls=True)
-    # Uses paddleocr.PaddleOCR + PyMuPDF
+    # Uses paddleocr.PaddleOCR + PDFium
     # Returns bounding quadrilaterals → axis-aligned BoundingBox
 ```
 

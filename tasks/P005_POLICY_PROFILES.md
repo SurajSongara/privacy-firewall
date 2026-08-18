@@ -1,3 +1,0 @@
-# P005_POLICY_PROFILES
-
-Create `policy/` module — the layer that decides what to do with detections. YAML schema: per detection_type default action (`redact` | `keep` | `ask`), confidence bands (`auto_redact_above`, default 0.9; `ask_above`, default 0.5; below = ignore), optional value allowlists, default redaction type. Ship builtin presets: `share-with-ai` (redact everything detected), `kyc` (keep PAN + name context, redact financials), `minimal` (ask for everything). Loader with pydantic validation + clear errors; `--policy <name|path>` resolvable. Engine-pure, no CLI logic. Tests for schema validation and preset semantics.

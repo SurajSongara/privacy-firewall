@@ -43,6 +43,13 @@ def review_cmd(
         str | None,
         typer.Option("--ocr-engine", help="OCR engine to use."),
     ] = None,
+    password: Annotated[
+        str | None,
+        typer.Option(
+            "--password",
+            help="Password for an encrypted PDF (you can also enter it in the browser).",
+        ),
+    ] = None,
 ) -> None:
     """Review detections in a local web UI, then export the redacted PDF."""
     try:
@@ -65,4 +72,5 @@ def review_cmd(
         force_ocr=ocr,
         auto=auto and not ocr,
         ocr_provider=ocr_engine,
+        password=password,
     )

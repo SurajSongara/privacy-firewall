@@ -1,0 +1,49 @@
+Privacy Firewall — Source Code Availability
+===========================================
+
+Privacy Firewall is free software licensed under the GNU Affero General Public
+License, version 3 (AGPL-3.0). The full licence text is installed alongside this
+file as LICENSE.
+
+This application is distributed as a binary bundle that also includes other free
+software. As of the PDFium backend change, no copyleft-licensed component is
+bundled: the PDF engine is PDFium (BSD-3-Clause) via pypdfium2. The AGPL applies
+to Privacy Firewall's own source by the maintainers' choice.
+
+WHERE TO GET THE SOURCE
+-----------------------
+
+The complete corresponding source code for this application, including the build
+scripts used to produce this binary, is published at:
+
+    https://github.com/SurajSongara/privacy-firewall-starter-kit
+
+Each released binary is built from a tagged commit in that repository; the tag
+matches the version shown by "Privacy Firewall --version".
+
+The build recipe that produced this bundle lives under packaging/ in that
+repository (privacy_firewall.spec, launcher.py, and the platform installer
+scripts).
+
+WRITTEN OFFER
+-------------
+
+If you cannot obtain the source from the address above, you may request a copy of
+the complete corresponding source code for this binary, on a physical medium
+customarily used for software interchange, for no more than the cost of
+performing the distribution. Requests may be sent to the maintainers via the
+issue tracker of the repository named above.
+
+THIRD-PARTY COMPONENTS
+----------------------
+
+This bundle includes, among others:
+
+  * PDFium (via pypdfium2)  — BSD-3-Clause / Apache-2.0
+  * Pillow                  — MIT-CMU
+  * RapidOCR + ONNX Runtime — Apache-2.0
+  * FastAPI, Starlette, Uvicorn — MIT / BSD
+  * Pydantic               — MIT
+  * Typer / Click          — MIT / BSD
+
+Their respective licences apply to those components.

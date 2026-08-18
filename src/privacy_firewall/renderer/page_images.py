@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import fitz
-
 from privacy_firewall.models.geometry import BoundingBox
+from privacy_firewall.parsers.pdf_open import open_pdf
+from privacy_firewall.parsers.pdfium_compat import open_document
 
 DEFAULT_DPI = 144
 
@@ -36,33 +36,42 @@ class PageImage:
     png_bytes: bytes
 
 
-def page_count(pdf_path: Path) -> int:
+def page_count(pdf_path: Path, password: str | None = None) -> int:
     """Return the number of pages in the PDF."""
-    with fitz.open(pdf_path) as doc:
+    doc = open_pdf(pdf_path, password=password)
+    try:
         return int(doc.page_count)
+    finally:
+        doc.close()
 
 
-def render_page_image(pdf_path: Path, page_number: int, dpi: int = DEFAULT_DPI) -> PageImage:
+def render_page_image(
+    pdf_path: Path, page_number: int, dpi: int = DEFAULT_DPI, password: str | None = None
+) -> PageImage:
     """Rasterise one page of a PDF to a PNG.
 
     Args:
         pdf_path: Path to the PDF.
         page_number: 1-based page number.
         dpi: Render resolution (PDF native resolution is 72 dpi).
+        password: Password for an encrypted PDF, if required.
 
     Returns:
         The rendered PageImage.
 
     Raises:
         ValueError: If *page_number* is out of range.
+        EncryptedPDFError: If the PDF is password-protected and no correct
+            password was supplied.
     """
     scale = dpi / 72.0
-    with fitz.open(pdf_path) as doc:
+    doc = open_pdf(pdf_path, password=password)
+    try:
         if not 1 <= page_number <= doc.page_count:
             msg = f"page {page_number} out of range (1..{doc.page_count})"
             raise ValueError(msg)
         page = doc[page_number - 1]
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
+        pixmap = page.get_pixmap(scale=scale)
         return PageImage(
             page_number=page_number,
             width=pixmap.width,
@@ -70,6 +79,8 @@ def render_page_image(pdf_path: Path, page_number: int, dpi: int = DEFAULT_DPI) 
             scale=scale,
             png_bytes=pixmap.tobytes("png"),
         )
+    finally:
+        doc.close()
 
 
 def render_page_image_bytes(data: bytes, page_number: int, dpi: int = DEFAULT_DPI) -> PageImage:
@@ -90,12 +101,12 @@ def render_page_image_bytes(data: bytes, page_number: int, dpi: int = DEFAULT_DP
         ValueError: If *page_number* is out of range.
     """
     scale = dpi / 72.0
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    with open_document(stream=data) as doc:
         if not 1 <= page_number <= doc.page_count:
             msg = f"page {page_number} out of range (1..{doc.page_count})"
             raise ValueError(msg)
         page = doc[page_number - 1]
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
+        pixmap = page.get_pixmap(scale=scale)
         return PageImage(
             page_number=page_number,
             width=pixmap.width,

@@ -5,18 +5,17 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from privacy_firewall.models.blocks import TextBlock, TextSpan
 from privacy_firewall.models.document import Document, Page
 from privacy_firewall.models.geometry import BoundingBox
 from privacy_firewall.ocr.provider import OCRProvider
+from privacy_firewall.parsers.pdfium_compat import PdfiumDocument, Rect, open_document
 
 
 class PaddleOCRAdapter(OCRProvider):
     """Adapter that runs PaddleOCR on each PDF page and returns a Document.
 
-    Each page is rendered to an image via PyMuPDF before being fed to
+    Each page is rendered to an image via PDFium before being fed to
     PaddleOCR.  The OCR results (text + bounding quadrilaterals) are
     converted to ``TextBlock`` and ``TextSpan`` items with appropriate
     confidence scores.
@@ -90,7 +89,7 @@ class PaddleOCRAdapter(OCRProvider):
         Returns:
             A ``Document`` with OCR-extracted ``TextBlock`` items.
         """
-        doc = fitz.open(str(path))
+        doc = open_document(path)
         try:
             return self._process_doc(doc)
         finally:
@@ -105,17 +104,17 @@ class PaddleOCRAdapter(OCRProvider):
         Returns:
             A ``Document`` with OCR-extracted ``TextBlock`` items.
         """
-        doc = fitz.open(stream=data, filetype="pdf")
+        doc = open_document(stream=data)
         try:
             return self._process_doc(doc)
         finally:
             doc.close()
 
-    def _process_doc(self, doc: fitz.Document) -> Document:
+    def _process_doc(self, doc: PdfiumDocument) -> Document:
         """Core logic: render each page, run OCR, build Document.
 
         Args:
-            doc: An open PyMuPDF document.
+            doc: An open document.
 
         Returns:
             A ``Document`` with OCR'd text.
@@ -153,7 +152,7 @@ class PaddleOCRAdapter(OCRProvider):
         ocr_result: Any,
         page_number: int,
         scale: float,
-        rect: fitz.Rect,
+        rect: Rect,
     ) -> list[TextBlock]:
         """Convert a PaddleOCR page result into ``TextBlock`` items.
 
@@ -166,7 +165,7 @@ class PaddleOCRAdapter(OCRProvider):
                 or ``None``).
             page_number: 1-based page number.
             scale: The DPI scale factor (dpi / 72).
-            rect: The page's ``fitz.Rect`` for coordinate normalisation.
+            rect: The page's rectangle for coordinate normalisation.
 
         Returns:
             A list of ``TextBlock`` objects.

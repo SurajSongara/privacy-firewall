@@ -5,14 +5,15 @@ from typing import Annotated
 
 import typer
 
-from privacy_firewall.cli.detect_cmd import _build_registry
+from privacy_firewall.cli._pdf import resolve_password
 from privacy_firewall.cli.scan_cmd import _safe
-from privacy_firewall.engine.context import ContextScorer
 from privacy_firewall.engine.decision import ReviewDecision, ReviewPlan, file_sha256
-from privacy_firewall.engine.fusion import FusionEngine
-from privacy_firewall.engine.ocr_pipeline import get_merged_document, get_pipeline_summary
+from privacy_firewall.engine.ocr_pipeline import get_merged_document
+from privacy_firewall.engine.redact import redact_document
 from privacy_firewall.engine.redaction import RedactionPlanner, RedactionType
+from privacy_firewall.engine.verification import certify
 from privacy_firewall.models.detection import Detection
+from privacy_firewall.parsers.pdf_open import EncryptedPDFError
 from privacy_firewall.renderer.pdf_renderer import PDFRenderer
 
 
@@ -91,6 +92,17 @@ def redact_cmd(
             help="With --plan: accept all suggestions (unresolved 'ask' items are redacted).",
         ),
     ] = False,
+    certificate: Annotated[
+        bool,
+        typer.Option(
+            "--certificate",
+            help="Verify the output leaks no redacted PII and write an audit certificate.",
+        ),
+    ] = False,
+    password: Annotated[
+        str | None,
+        typer.Option("--password", help="Password for an encrypted (password-protected) PDF."),
+    ] = None,
 ) -> None:
     """Scan a PDF for PII and produce a redacted copy."""
     type_map: dict[str, RedactionType] = {
@@ -104,32 +116,60 @@ def redact_cmd(
         msg = f"Unknown redaction type: {redaction_type!r}. Choose from: {choices}"
         raise typer.BadParameter(msg)
 
-    if plan_path is not None:
-        detections = _resolve_from_plan(plan_path, input_pdf, interactive=interactive, yes=yes)
-        document, _ = get_merged_document(input_pdf)
-        pipeline_note = f"review plan ({plan_path.name})"
-    else:
-        document, source = get_merged_document(
-            input_pdf, force_ocr=ocr, auto=auto, ocr_provider=ocr_engine,
-        )
-
-        registry = _build_registry(detector)
-        result = registry.run_all(document, values_only=values_only)
-
-        scored = ContextScorer().apply(document, result.detections)
-        engine = FusionEngine()
-        detections = engine.fuse(scored).detections
-        pipeline_note = get_pipeline_summary(source)
-
-    planner = RedactionPlanner()
-    plan = planner.plan(document, detections, default_type=rtype)
-
-    renderer = PDFRenderer()
-    out_path = renderer.render(input_pdf, output_pdf, plan)
+    pw = resolve_password(input_pdf, password)
+    try:
+        if plan_path is not None:
+            detections = _resolve_from_plan(plan_path, input_pdf, interactive=interactive, yes=yes)
+            document, _ = get_merged_document(input_pdf, password=pw)
+            pipeline_note = f"review plan ({plan_path.name})"
+            planner = RedactionPlanner()
+            plan = planner.plan(document, detections, default_type=rtype)
+            out_path = PDFRenderer().render(input_pdf, output_pdf, plan, password=pw)
+            redaction_count = plan.total_redactions
+        else:
+            out_path, detections, pipeline_note = redact_document(
+                input_pdf,
+                output_pdf,
+                redaction_type=rtype,
+                force_ocr=ocr,
+                auto=auto,
+                ocr_provider=ocr_engine,
+                detector_names=detector,
+                values_only=values_only,
+                password=pw,
+            )
+            redaction_count = len(detections)
+    except EncryptedPDFError as exc:
+        typer.echo(f"Error: {_safe(str(exc))}", err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"Pipeline: {pipeline_note}")
     typer.echo(f"Redacted PDF saved to: {out_path}")
-    typer.echo(f"Redactions applied: {plan.total_redactions}")
+    typer.echo(f"Redactions applied: {redaction_count}")
+
+    if certificate:
+        if rtype is RedactionType.HIGHLIGHT:
+            typer.echo(
+                "Skipping certificate: --type highlight is a visual overlay, "
+                "not a destructive redaction.",
+                err=True,
+            )
+        else:
+            _write_certificate(input_pdf, out_path, detections)
+
+
+def _write_certificate(input_pdf: Path, out_path: Path, detections: list[Detection]) -> None:
+    """Verify the redacted output and write JSON + PDF certificates."""
+    json_path = out_path.with_name(f"{out_path.stem}.certificate.json")
+    pdf_path = out_path.with_name(f"{out_path.stem}.certificate.pdf")
+    cert = certify(input_pdf, out_path, detections, json_path=json_path, pdf_path=pdf_path)
+    status = "PASSED" if cert.verification_passed else "FAILED"
+    typer.echo(f"Verification: {status} - {_safe(cert.verification_detail)}")
+    typer.echo(f"Certificate: {json_path}  /  {pdf_path}")
+    if not cert.verification_passed:
+        raise typer.Exit(code=1)
 
 
 def _resolve_from_plan(

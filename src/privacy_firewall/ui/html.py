@@ -409,6 +409,13 @@ PAGE_HTML = r"""<!doctype html>
     <div class="spinner" id="load-spinner"></div>
     <div class="stage" id="load-stage">Starting…</div>
     <div class="elapsed" id="load-elapsed"></div>
+    <div id="unlock-box" style="display:none;margin-top:14px;text-align:center">
+      <div style="font-size:13px;color:#334155;margin-bottom:8px">🔒 This PDF is password-protected.</div>
+      <input type="password" id="unlock-input" placeholder="Password" autocomplete="off"
+             style="padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;width:220px;font-size:14px">
+      <button id="unlock-btn" style="margin-left:6px;padding:8px 14px;border:0;border-radius:8px;background:#6366f1;color:#fff;font-weight:600;cursor:pointer">Unlock</button>
+      <div id="unlock-error" style="display:none;color:#b91c1c;font-size:12px;margin-top:8px"></div>
+    </div>
   </div>
 </div>
 
@@ -504,6 +511,41 @@ async function showEarlyPages() {
   }
 }
 
+let unlockWired = false;
+function showUnlock(errMsg) {
+  document.getElementById("loading").style.display = "flex";
+  document.getElementById("load-spinner").style.display = "none";
+  document.getElementById("load-stage").textContent = "Password required";
+  document.getElementById("load-elapsed").textContent = "";
+  document.getElementById("unlock-box").style.display = "block";
+  const err = document.getElementById("unlock-error");
+  if (errMsg) { err.textContent = errMsg; err.style.display = "block"; }
+  const input = document.getElementById("unlock-input");
+  input.focus();
+  if (!unlockWired) {
+    unlockWired = true;
+    document.getElementById("unlock-btn").addEventListener("click", submitUnlock);
+    input.addEventListener("keydown", e => { if (e.key === "Enter") submitUnlock(); });
+  }
+}
+
+async function submitUnlock() {
+  const input = document.getElementById("unlock-input");
+  const pw = input.value;
+  if (!pw) return;
+  document.getElementById("unlock-box").style.display = "none";
+  document.getElementById("load-spinner").style.display = "";
+  document.getElementById("load-stage").textContent = "Unlocking…";
+  try {
+    await api("api/unlock", {password: pw});
+  } catch (err) {
+    showUnlock("Could not unlock. Try again.");
+    return;
+  }
+  input.value = "";
+  setTimeout(boot, 600);
+}
+
 async function boot() {
   let status;
   try {
@@ -516,6 +558,10 @@ async function boot() {
   const elapsed = Math.round((Date.now() - bootStart) / 1000);
   document.getElementById("load-elapsed").textContent = elapsed + "s elapsed";
   if (status.status === "error") {
+    if (status.needs_password) {
+      showUnlock();
+      return;
+    }
     if (earlyView) {
       const banner = document.getElementById("progress-banner");
       banner.style.display = "flex";

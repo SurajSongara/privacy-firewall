@@ -45,6 +45,12 @@ class RerunRequest(BaseModel):
     ocr_engine: str | None = None
 
 
+class UnlockRequest(BaseModel):
+    """Supply a password to unlock an encrypted PDF."""
+
+    password: str
+
+
 class MarkRequest(BaseModel):
     """Mark every instance of a text selection as PII."""
 
@@ -100,6 +106,22 @@ def create_app(session: ReviewSession) -> FastAPI:
         def worker() -> None:
             try:
                 session.rerun(force_ocr=True, ocr_provider=request.ocr_engine)
+            except Exception:  # noqa: BLE001 - status/error already recorded
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+        return session.status_payload()
+
+    @app.post("/api/unlock")
+    def unlock(request: UnlockRequest) -> dict:  # type: ignore[type-arg]
+        with rerun_lock:
+            if session.status not in ("error", "ready"):
+                raise HTTPException(status_code=409, detail="pipeline is already running")
+            session.status = "parsing"  # claim before the thread starts
+
+        def worker() -> None:
+            try:
+                session.unlock(request.password)
             except Exception:  # noqa: BLE001 - status/error already recorded
                 pass
 
@@ -250,6 +272,7 @@ def run_review(
     force_ocr: bool = False,
     auto: bool = False,
     ocr_provider: str | None = None,
+    password: str | None = None,
 ) -> None:
     """Serve the review UI immediately; the pipeline runs in the background.
 
@@ -264,11 +287,18 @@ def run_review(
         force_ocr: Force the OCR pipeline.
         auto: Let diagnostics choose the pipeline.
         ocr_provider: Specific OCR engine name.
+        password: Password for an encrypted PDF (else the browser prompts).
     """
     import uvicorn
 
     session = ReviewSession(
-        pdf_path, policy, force_ocr=force_ocr, auto=auto, ocr_provider=ocr_provider, lazy=True
+        pdf_path,
+        policy,
+        force_ocr=force_ocr,
+        auto=auto,
+        ocr_provider=ocr_provider,
+        lazy=True,
+        password=password,
     )
     app = create_app(session)
 

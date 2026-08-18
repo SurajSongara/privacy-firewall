@@ -18,6 +18,7 @@ def get_merged_document(
     auto: bool = False,
     native_doc: Document | None = None,
     ocr_provider: str | None = None,
+    password: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[Document, str]:
     """Return the best available document for detection.
@@ -28,6 +29,7 @@ def get_merged_document(
         auto: When ``True``, run diagnostics and decide automatically.
         native_doc: Pre-parsed native document (avoids re-parsing).
         ocr_provider: OCR adapter name.  ``None`` uses the registry default.
+        password: Password for an encrypted PDF, if required.
         progress: Optional callback invoked with a short stage label
             (``"parsing"``, ``"analyzing"``, ``"ocr"``, ``"merging"``) as
             the pipeline advances — lets callers report progress.
@@ -44,20 +46,20 @@ def get_merged_document(
 
     if native_doc is None:
         report("parsing")
-        native_doc = PDFParser(pdf_path).parse()
+        native_doc = PDFParser(pdf_path, password=password).parse()
 
     if not force_ocr and not auto:
         return native_doc, "native"
 
     if auto:
         report("analyzing")
-        report_result = DocumentAnalyzer(pdf_path).analyze()
+        report_result = DocumentAnalyzer(pdf_path, password=password).analyze()
         pipeline = report_result.recommended_pipeline
         if pipeline == PipelineType.NATIVE:
             return native_doc, "native"
 
     report("ocr")
-    ocr_doc = _run_ocr(pdf_path, provider=ocr_provider)
+    ocr_doc = _run_ocr(pdf_path, provider=ocr_provider, password=password)
 
     if not native_doc.pages or all(
         not any(hasattr(b, "text") and b.text for b in p.blocks) for p in native_doc.pages
@@ -69,7 +71,7 @@ def get_merged_document(
     return merge_result.document, "hybrid"
 
 
-def _run_ocr(pdf_path: Path, provider: str | None = None) -> Document:
+def _run_ocr(pdf_path: Path, provider: str | None = None, password: str | None = None) -> Document:
     """Run an OCR adapter on a PDF file.
 
     When no provider is named, engines are tried in registry order
@@ -77,10 +79,15 @@ def _run_ocr(pdf_path: Path, provider: str | None = None) -> Document:
     runtime — e.g. Tesseract installed without its tessdata — so
     failures fall through to the next engine instead of aborting.
 
+    An encrypted PDF is decrypted once to an in-memory byte stream so the
+    OCR adapters (which open a path and know nothing about passwords) can
+    process it through their ``process_bytes`` path unchanged.
+
     Args:
         pdf_path: Path to the PDF.
         provider: OCR adapter name, or ``None`` to try all registered
             engines until one succeeds.
+        password: Password for an encrypted PDF, if required.
 
     Returns:
         A ``Document`` with OCR-extracted blocks.
@@ -88,16 +95,27 @@ def _run_ocr(pdf_path: Path, provider: str | None = None) -> Document:
     Raises:
         RuntimeError: If every registered engine failed.
         ValueError: If a named provider is unknown, or none are registered.
+        EncryptedPDFError: If the PDF is locked and no correct password given.
     """
+    from privacy_firewall.parsers.pdf_open import decrypted_bytes
+
+    # Only decrypt when a password is supplied: an encrypted file with no
+    # password already failed the earlier native-parse step, so reaching OCR
+    # with password=None means the file is not encrypted — open it by path.
+    data = decrypted_bytes(pdf_path, password) if password else None
+
+    def run(adapter: OCRProvider) -> Document:
+        return adapter.process_bytes(data) if data is not None else adapter.process(pdf_path)
+
     if provider is not None:
-        return _get_adapter(provider).process(pdf_path)
+        return run(_get_adapter(provider))
 
     from privacy_firewall.ocr import get_registry
 
     registry = get_registry()
     names = registry.names
     if not names:
-        return _get_adapter(None).process(pdf_path)  # raises the install hint
+        return run(_get_adapter(None))  # raises the install hint
 
     if registry.default_name in names:
         names.remove(registry.default_name)
@@ -106,7 +124,7 @@ def _run_ocr(pdf_path: Path, provider: str | None = None) -> Document:
     errors: list[str] = []
     for name in names:
         try:
-            return _get_adapter(name).process(pdf_path)
+            return run(_get_adapter(name))
         except Exception as exc:  # noqa: BLE001 - each engine fails its own way
             errors.append(f"{name}: {exc}")
 

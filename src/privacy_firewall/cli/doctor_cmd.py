@@ -6,6 +6,7 @@ from typing import Annotated
 
 import typer
 
+from privacy_firewall.cli._pdf import resolve_password
 from privacy_firewall.diagnostics import DocumentAnalyzer
 from privacy_firewall.layout import LayoutAnalyzer
 from privacy_firewall.parsers.pdf_parser import PDFParser
@@ -16,11 +17,19 @@ def doctor_cmd(
         Path,
         typer.Argument(help="Path to the PDF file to diagnose.", exists=True, dir_okay=False),
     ],
+    password: Annotated[
+        str | None,
+        typer.Option("--password", help="Password for an encrypted (password-protected) PDF."),
+    ] = None,
 ) -> None:
     """Analyse a PDF and display a comprehensive health report."""
+    pw = resolve_password(input_pdf, password)
+
     # --- Diagnostics ---
-    analyzer = DocumentAnalyzer(input_pdf)
+    analyzer = DocumentAnalyzer(input_pdf, pw)
     report = analyzer.analyze()
+    # The document is locked if it is encrypted and we could read no content.
+    locked = report.is_encrypted and not report.has_native_text and report.image_count == 0
 
     typer.echo("=== Document Diagnostics ===")
     typer.echo(f"File:           {report.file_path}")
@@ -49,7 +58,10 @@ def doctor_cmd(
     # --- OCR recommendation ---
     typer.echo("")
     typer.echo("--- OCR Recommendation ---")
-    if report.recommended_pipeline.value == "ocr":
+    if locked:
+        typer.echo("  This PDF is password-protected and could not be read.")
+        typer.echo("  Re-run with --password <password> to analyse or redact it.")
+    elif report.recommended_pipeline.value == "ocr":
         typer.echo("  This document has little or no extractable text.")
         typer.echo("  Recommendation: run with --ocr to invoke OCR.")
     elif report.recommended_pipeline.value == "hybrid":
@@ -58,8 +70,10 @@ def doctor_cmd(
         typer.echo("  Text quality is good. Native extraction should suffice.")
 
     # --- Layout summary ---
+    if locked:
+        return
     try:
-        parser = PDFParser(input_pdf)
+        parser = PDFParser(input_pdf, pw)
         document = parser.parse()
         layout_results = LayoutAnalyzer.analyze(document)
 

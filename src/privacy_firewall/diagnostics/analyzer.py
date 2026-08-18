@@ -4,40 +4,45 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from privacy_firewall.diagnostics.models import DiagnosticReport, PipelineType
 from privacy_firewall.diagnostics.pipeline_selector import PipelineSelector
 from privacy_firewall.diagnostics.text_quality import TextQualityAnalyzer
+from privacy_firewall.parsers.pdf_open import open_pdf
 
 
 class DocumentAnalyzer:
     """Inspects a PDF file and produces a structured diagnostic report.
 
-    The analyser opens the document with PyMuPDF, runs a series of checks
+    The analyser opens the document, runs a series of checks
     (text presence, image count, rotation, encryption, ...), scores the
     quality of any extractable text, and recommends a processing pipeline.
     """
 
-    def __init__(self, file_path: str | Path) -> None:
+    def __init__(self, file_path: str | Path, password: str | None = None) -> None:
         """Initialise the analyser with a path to a PDF file.
 
         Args:
             file_path: Path to the PDF file to analyse.
+            password: Password for an encrypted PDF, if available. When a
+                correct one is supplied the analyser unlocks the document
+                and inspects its content; otherwise it reports encryption
+                without crashing.
         """
         self._path = Path(file_path)
+        self._password = password
 
     @staticmethod
-    def from_bytes(data: bytes) -> DiagnosticReport:
+    def from_bytes(data: bytes, password: str | None = None) -> DiagnosticReport:
         """Analyse PDF content from raw bytes.
 
         Args:
             data: Raw PDF bytes.
+            password: Password for an encrypted PDF, if available.
 
         Returns:
             A DiagnosticReport for the supplied content.
         """
-        doc = fitz.open(stream=data, filetype="pdf")
+        doc = open_pdf(stream=data, password=password, required=False)
         try:
             return DocumentAnalyzer._analyze_doc(doc, file_path="")
         finally:
@@ -49,7 +54,7 @@ class DocumentAnalyzer:
         Returns:
             A DiagnosticReport with all fields populated.
         """
-        doc = fitz.open(str(self._path))
+        doc = open_pdf(self._path, password=self._password, required=False)
         try:
             return self._analyze_doc(doc, file_path=str(self._path.resolve()))
         finally:
@@ -57,19 +62,23 @@ class DocumentAnalyzer:
 
     @staticmethod
     def _analyze_doc(doc: Any, file_path: str) -> DiagnosticReport:
-        """Core analysis logic — inspects an open PyMuPDF document.
+        """Core analysis logic — inspects an open document.
 
         Args:
-            doc: An open PyMuPDF document.
+            doc: An open document.
             file_path: The file path string (empty for byte input).
 
         Returns:
             A populated DiagnosticReport.
         """
         page_count = len(doc)
-        is_encrypted = doc.needs_pass or doc.is_encrypted
+        # ``needs_pass`` is the *locked* state — it is 0 once a correct
+        # password has authenticated the document, so an unlocked-but-
+        # encrypted file is analysed normally rather than short-circuited.
+        locked = bool(doc.needs_pass)
+        is_encrypted = locked or bool(doc.is_encrypted)
 
-        if is_encrypted or page_count == 0:
+        if locked or page_count == 0:
             return DiagnosticReport(
                 file_path=file_path,
                 page_count=page_count,

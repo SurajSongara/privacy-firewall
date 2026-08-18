@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from privacy_firewall.detectors import (
     AadhaarDetector,
     AccountDetector,
@@ -41,6 +39,7 @@ from privacy_firewall.models.blocks import TextBlock
 from privacy_firewall.models.detection import Detection
 from privacy_firewall.models.document import Document
 from privacy_firewall.models.geometry import BoundingBox, Span
+from privacy_firewall.parsers.pdf_open import EncryptedPDFError, decrypted_bytes, open_pdf
 from privacy_firewall.policy.models import Policy, PolicyAction
 from privacy_firewall.renderer.page_images import (
     DEFAULT_DPI,
@@ -146,6 +145,7 @@ class ReviewSession:
         dpi: int = DEFAULT_DPI,
         lazy: bool = False,
         terms_store: TermsStore | None = None,
+        password: str | None = None,
     ) -> None:
         """Set up the session and (unless *lazy*) run the pipeline.
 
@@ -160,6 +160,8 @@ class ReviewSession:
                 (e.g. in a background thread while the server starts).
             terms_store: Workspace terms remembered across documents;
                 their instances are pre-suggested (never pre-decided).
+            password: Password for an encrypted PDF, if required. Kept in
+                memory for the session only — never written to disk.
         """
         self.pdf_path = Path(pdf_path)
         self.policy = policy
@@ -167,6 +169,7 @@ class ReviewSession:
         self.force_ocr = force_ocr
         self.auto = auto
         self.ocr_provider = ocr_provider
+        self.password = password
         self.terms_store = terms_store
         self._applied_term_keys: set[tuple[str, str]] = set()
         self._page_dims: list[dict[str, Any]] | None = None
@@ -179,6 +182,7 @@ class ReviewSession:
         self.source = ""
         self.status = "starting"
         self.error: str | None = None
+        self.needs_password = False
         self.restored_decisions = 0
         self.restored_manual = 0
         self.last_output_path: Path | None = None
@@ -209,7 +213,11 @@ class ReviewSession:
 
     def status_payload(self) -> dict[str, Any]:
         """JSON-friendly pipeline status for the UI loading screen."""
-        return {"status": self.status, "detail": self.error or ""}
+        return {
+            "status": self.status,
+            "detail": self.error or "",
+            "needs_password": self.needs_password,
+        }
 
     def run(self) -> None:
         """Execute the detection pipeline (blocking).
@@ -220,6 +228,41 @@ class ReviewSession:
         """
         try:
             self._run_pipeline(force_ocr=self.force_ocr, auto=self.auto)
+        except EncryptedPDFError as exc:
+            self.status = "error"
+            self.error = str(exc)
+            self.needs_password = True
+            raise
+        except Exception as exc:
+            self.status = "error"
+            self.error = str(exc)
+            raise
+
+    def unlock(self, password: str) -> None:
+        """Supply a password for an encrypted PDF and re-run the pipeline.
+
+        The password is held in memory for this session only. Cached page
+        images and geometry (rendered while locked) are cleared so they are
+        rebuilt from the now-readable document.
+
+        Args:
+            password: The password to unlock the document.
+        """
+        self.password = password
+        self.needs_password = False
+        self.error = None
+        self._preview_pdf = None
+        self._preview_key = None
+        self._page_dims = None
+        self._page_cache.clear()
+        self._char_words_cache.clear()
+        try:
+            self._run_pipeline(force_ocr=self.force_ocr, auto=self.auto)
+        except EncryptedPDFError as exc:
+            self.status = "error"
+            self.error = str(exc)
+            self.needs_password = True
+            raise
         except Exception as exc:
             self.status = "error"
             self.error = str(exc)
@@ -254,6 +297,7 @@ class ReviewSession:
             force_ocr=force_ocr,
             auto=auto,
             ocr_provider=self.ocr_provider,
+            password=self.password,
             progress=self._set_stage,
         )
 
@@ -743,7 +787,7 @@ class ReviewSession:
     def _page_char_words(self, page_number: int) -> dict[str, list[dict[str, Any]]]:
         """Whitespace-delimited words with per-char geometry, keyed by text.
 
-        Built once per page from PyMuPDF's ``rawdict`` of the source PDF
+        Built once per page from the ``rawdict`` of the source PDF
         (same extraction family as ``get_text("words")``, so word texts
         line up with the parser's spans on native documents).
         """
@@ -753,7 +797,7 @@ class ReviewSession:
 
         index: dict[str, list[dict[str, Any]]] = {}
         try:
-            with fitz.open(str(self.pdf_path)) as doc:
+            with open_pdf(self.pdf_path, password=self.password) as doc:
                 raw = doc[page_number - 1].get_text("rawdict")
         except Exception:  # noqa: BLE001 - char geometry is best-effort
             self._char_words_cache[page_number] = index
@@ -796,7 +840,7 @@ class ReviewSession:
         running, so the UI can show the pages during a long OCR pass.
         """
         if self._page_dims is None:
-            with fitz.open(str(self.pdf_path)) as doc:
+            with open_pdf(self.pdf_path, password=self.password) as doc:
                 self._page_dims = [
                     {
                         "page_number": i + 1,
@@ -817,7 +861,7 @@ class ReviewSession:
         if cached is not None:
             self._page_cache.move_to_end(page_number)
             return cached
-        image = render_page_image(self.pdf_path, page_number, dpi=self.dpi)
+        image = render_page_image(self.pdf_path, page_number, dpi=self.dpi, password=self.password)
         self._page_cache[page_number] = image.png_bytes
         while len(self._page_cache) > self.PAGE_CACHE_PAGES:
             self._page_cache.popitem(last=False)
@@ -862,7 +906,10 @@ class ReviewSession:
             redaction_plan = RedactionPlanner().plan(
                 self.document, detections, default_type=redaction_type
             )
-            self._preview_pdf = PDFRenderer.render_bytes(self.pdf_path.read_bytes(), redaction_plan)
+            source_bytes = (
+                decrypted_bytes(self.pdf_path, self.password) or self.pdf_path.read_bytes()
+            )
+            self._preview_pdf = PDFRenderer.render_bytes(source_bytes, redaction_plan)
             self._preview_key = key
         return render_page_image_bytes(self._preview_pdf, page_number, dpi=self.dpi).png_bytes
 
@@ -897,7 +944,9 @@ class ReviewSession:
         redaction_plan = RedactionPlanner().plan(
             self.document, detections, default_type=redaction_type
         )
-        out = PDFRenderer().render(self.pdf_path, output_path, redaction_plan)
+        out = PDFRenderer().render(
+            self.pdf_path, output_path, redaction_plan, password=self.password
+        )
         self.save_plan()
         self.last_output_path = Path(out)
         return Path(out), redaction_plan.total_redactions

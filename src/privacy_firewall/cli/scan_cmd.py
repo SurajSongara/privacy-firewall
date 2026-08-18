@@ -7,6 +7,7 @@ import typer
 
 from privacy_firewall.engine.ocr_pipeline import get_merged_document, get_pipeline_summary
 from privacy_firewall.models.blocks import ImageBlock, TextBlock
+from privacy_firewall.parsers.pdf_open import EncryptedPDFError
 
 
 def _safe(text: str, max_len: int = 60) -> str:
@@ -43,11 +44,22 @@ def scan_cmd(
         str | None,
         typer.Option("--ocr-engine", help=_engine_help()),
     ] = None,
+    password: Annotated[
+        str | None,
+        typer.Option("--password", help="Password for an encrypted (password-protected) PDF."),
+    ] = None,
 ) -> None:
     """Parse a PDF and display its structure (pages, blocks, text previews)."""
-    document, source = get_merged_document(
-        input_pdf, force_ocr=ocr, auto=auto, ocr_provider=ocr_engine,
-    )
+    from privacy_firewall.cli._pdf import resolve_password
+
+    pw = resolve_password(input_pdf, password)
+    try:
+        document, source = get_merged_document(
+            input_pdf, force_ocr=ocr, auto=auto, ocr_provider=ocr_engine, password=pw,
+        )
+    except EncryptedPDFError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     typer.echo(f"Pipeline: {get_pipeline_summary(source)}")
     typer.echo(f"Pages: {len(document.pages)}")

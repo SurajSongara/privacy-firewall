@@ -5,26 +5,21 @@ from typing import Annotated
 
 import typer
 
-from privacy_firewall.detectors import (
-    AadhaarDetector,
-    AccountDetector,
-    DetectorRegistry,
-    EmailDetector,
-    IFSCDetector,
-    NameDetector,
-    PANDetector,
-    PhoneDetector,
-    UpiDetector,
-)
+from privacy_firewall.cli._pdf import resolve_password
+from privacy_firewall.detectors import DetectorRegistry, build_registry
 from privacy_firewall.engine.context import ContextScorer
 from privacy_firewall.engine.decision import DecisionEngine, file_sha256
 from privacy_firewall.engine.fusion import FusionEngine
 from privacy_firewall.engine.ocr_pipeline import get_merged_document, get_pipeline_summary
+from privacy_firewall.parsers.pdf_open import EncryptedPDFError
 from privacy_firewall.policy import DEFAULT_POLICY_NAME, get_policy
 
 
 def _build_registry(detector_names: list[str] | None) -> DetectorRegistry:
     """Build a DetectorRegistry with the requested (or all) detectors.
+
+    Thin CLI wrapper around :func:`privacy_firewall.detectors.build_registry`
+    that surfaces an unknown-name error as a Typer parameter error.
 
     Args:
         detector_names: List of detector names to include, or ``None`` for all.
@@ -32,26 +27,34 @@ def _build_registry(detector_names: list[str] | None) -> DetectorRegistry:
     Returns:
         A populated DetectorRegistry.
     """
-    all_detectors: dict[str, type] = {
-        "pan": PANDetector,
-        "aadhaar": AadhaarDetector,
-        "email": EmailDetector,
-        "phone": PhoneDetector,
-        "upi": UpiDetector,
-        "ifsc": IFSCDetector,
-        "account": AccountDetector,
-        "name": NameDetector,
-    }
+    try:
+        return build_registry(detector_names)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
-    registry = DetectorRegistry()
-    names = detector_names if detector_names else list(all_detectors)
-    for name in names:
-        cls = all_detectors.get(name)
-        if cls is None:
-            msg = f"Unknown detector: {name!r}. Available: {', '.join(sorted(all_detectors))}"
-            raise typer.BadParameter(msg)
-        registry.register(cls())
-    return registry
+
+def _report_hidden(input_pdf: Path, password: str | None) -> None:
+    """Print PII found outside the page content stream, if any.
+
+    Metadata and annotations are invisible on the page but readable, and a
+    redaction that only edits drawing commands leaves them behind — so they are
+    worth surfacing explicitly during detection.
+    """
+    from privacy_firewall.engine.hidden_pii import scan_hidden_pii
+    from privacy_firewall.parsers.pdf_open import EncryptedPDFError, open_pdf
+
+    try:
+        with open_pdf(input_pdf, password=password) as doc:
+            findings = scan_hidden_pii(doc)
+    except (EncryptedPDFError, OSError, ValueError):
+        return  # non-PDF input or unreadable — nothing to add
+
+    if not findings:
+        return
+    typer.echo(f"\nHidden PII - metadata / annotations ({len(findings)}):")
+    typer.echo("  (invisible on the page; removed automatically on redaction)")
+    for i, f in enumerate(findings, start=1):
+        typer.echo(f"  {i:>3}. {f.detection_type:8s} | {f.value!r:30s} | {f.location}")
 
 
 def _engine_help() -> str:
@@ -112,11 +115,24 @@ def detect_cmd(
             help="Policy for plan suggestions: builtin name or a YAML/JSON file path.",
         ),
     ] = DEFAULT_POLICY_NAME,
+    password: Annotated[
+        str | None,
+        typer.Option("--password", help="Password for an encrypted (password-protected) PDF."),
+    ] = None,
 ) -> None:
     """Run PII detectors on a PDF and list all detections found."""
-    document, source = get_merged_document(
-        input_pdf, force_ocr=ocr, auto=auto, ocr_provider=ocr_engine,
-    )
+    pw = resolve_password(input_pdf, password)
+    try:
+        document, source = get_merged_document(
+            input_pdf,
+            force_ocr=ocr,
+            auto=auto,
+            ocr_provider=ocr_engine,
+            password=pw,
+        )
+    except EncryptedPDFError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     registry = _build_registry(detector)
     result = registry.run_all(document, values_only=values_only)
@@ -134,6 +150,8 @@ def detect_cmd(
             f"  {i:>3}. Page {d.page_number} | {d.detection_type:8s} | {d.text!r:30s} "
             f"| confidence={d.confidence:.2f} | detector={d.detector_name}"
         )
+
+    _report_hidden(input_pdf, pw)
 
     if plan_out is not None:
         try:

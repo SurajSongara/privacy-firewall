@@ -2,20 +2,23 @@
 
 The detection pipeline is PDF-native, so other formats are converted to
 PDF once at ingestion and the converted file is fed through the existing
-pipeline unchanged. Conversions are pure PyMuPDF except DOCX, which
-needs the optional ``python-docx`` package for text extraction.
+pipeline unchanged. Conversions use PDFium (via Pillow for raster decoding)
+except DOCX, which needs the optional ``python-docx`` package for text
+extraction.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+import pypdfium2 as pdfium
+
+from privacy_firewall.renderer.pdfium_draw import PageWriter
 
 IMAGE_SUFFIXES: frozenset[str] = frozenset(
     {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif"}
 )
-"""Raster image formats PyMuPDF can open and convert directly."""
+"""Raster image formats Pillow can decode and wrap into a PDF."""
 
 TEXT_SUFFIXES: frozenset[str] = frozenset({".txt", ".md"})
 """Plain-text formats rendered onto PDF pages as-is."""
@@ -90,36 +93,64 @@ def convert_to_pdf(source: Path, dest: Path) -> Path:
 def _image_to_pdf(source: Path, dest: Path) -> None:
     """Wrap a raster image into a single-page PDF (no text layer — OCR's job)."""
     try:
-        with fitz.open(str(source)) as img:
-            pdf_bytes = img.convert_to_pdf()
+        from PIL import Image
+
+        with Image.open(source) as img:
+            frame = img.convert("RGB")
+            width, height = frame.size
+            bitmap = pdfium.PdfBitmap.from_pil(frame)
     except Exception as exc:
         msg = f"could not read image {source.name}: {exc}"
         raise ConversionError(msg) from exc
-    dest.write_bytes(pdf_bytes)
+
+    doc = pdfium.PdfDocument.new()
+    try:
+        # One point per pixel keeps the page the image's natural size, which is
+        # what the OCR pipeline expects when it scales bboxes back to points.
+        page = doc.new_page(float(width), float(height))
+        image = pdfium.PdfImage.new(doc)
+        image.set_bitmap(bitmap)
+        image.set_matrix(pdfium.PdfMatrix().scale(float(width), float(height)))
+        page.insert_obj(image)
+        page.gen_content()
+        with dest.open("wb") as handle:
+            doc.save(handle)
+    except Exception as exc:
+        msg = f"could not convert image {source.name}: {exc}"
+        raise ConversionError(msg) from exc
+    finally:
+        doc.close()
 
 
 def _text_to_pdf(text: str, dest: Path) -> None:
     """Render plain text onto paginated A4 pages with a real text layer."""
-    max_width = _PAGE_WIDTH - 2 * _MARGIN
-    char_width = fitz.get_text_length("M", fontname=_FONT_NAME, fontsize=_FONT_SIZE)
-    chars_per_line = max(1, int(max_width / char_width))
-    lines_per_page = max(1, int((_PAGE_HEIGHT - 2 * _MARGIN) / _LINE_HEIGHT))
-
-    lines: list[str] = []
-    for raw in text.splitlines() or [""]:
-        raw = raw.replace("\t", "    ")
-        lines.extend(_wrap_line(raw, chars_per_line))
-
-    doc = fitz.open()
+    doc = pdfium.PdfDocument.new()
     try:
-        for start in range(0, max(len(lines), 1), lines_per_page):
-            page = doc.new_page(width=_PAGE_WIDTH, height=_PAGE_HEIGHT)
+        probe = doc.new_page(_PAGE_WIDTH, _PAGE_HEIGHT)
+        writer = PageWriter(doc, probe, _PAGE_HEIGHT)
+        max_width = _PAGE_WIDTH - 2 * _MARGIN
+        char_width = writer.text_width("M", _FONT_NAME, _FONT_SIZE)
+        chars_per_line = max(1, int(max_width / char_width)) if char_width else 80
+        lines_per_page = max(1, int((_PAGE_HEIGHT - 2 * _MARGIN) / _LINE_HEIGHT))
+
+        lines: list[str] = []
+        for raw in text.splitlines() or [""]:
+            raw = raw.replace("\t", "    ")
+            lines.extend(_wrap_line(raw, chars_per_line))
+
+        for index, start in enumerate(range(0, max(len(lines), 1), lines_per_page)):
+            page = probe if index == 0 else doc.new_page(_PAGE_WIDTH, _PAGE_HEIGHT)
+            writer = PageWriter(doc, page, _PAGE_HEIGHT)
             y = _MARGIN + _FONT_SIZE
             for line in lines[start : start + lines_per_page]:
                 if line:
-                    page.insert_text((_MARGIN, y), line, fontsize=_FONT_SIZE, fontname=_FONT_NAME)
+                    writer.insert_text(
+                        (_MARGIN, y), line, fontsize=_FONT_SIZE, fontname=_FONT_NAME
+                    )
                 y += _LINE_HEIGHT
-        doc.save(str(dest))
+            writer.finalize()
+        with dest.open("wb") as handle:
+            doc.save(handle)
     finally:
         doc.close()
 

@@ -6,6 +6,7 @@ from typing import Annotated
 import typer
 
 from privacy_firewall.cli import (
+    batch_cmd,
     detect_cmd,
     diagnostics_cmd,
     doctor_cmd,
@@ -23,6 +24,7 @@ app = typer.Typer(
 app.command(name="scan")(scan_cmd)
 app.command(name="detect")(detect_cmd)
 app.command(name="redact")(redact_cmd)
+app.command(name="redact-batch")(batch_cmd)
 app.command(name="diagnostics")(diagnostics_cmd)
 app.command(name="doctor")(doctor_cmd)
 app.command(name="review")(review_cmd)

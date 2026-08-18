@@ -1,0 +1,141 @@
+name: Build desktop installers
+
+# Builds the packaged desktop app on each OS (PyInstaller cannot cross-compile),
+# smoke-tests the resulting binary, and wraps it in a native installer.
+# Pushing a v* tag additionally attaches the artifacts to a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    # Installer builds are slow (the OCR bundle is large), so only run them on
+    # PRs that actually touch the packaging pipeline.
+    paths:
+      - "packaging/**"
+      - ".github/workflows/build-installers.yml"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+            binary: dist/PrivacyFirewall/PrivacyFirewall.exe
+          - os: macos-latest
+            label: macos
+            binary: dist/PrivacyFirewall/PrivacyFirewall
+          - os: ubuntu-latest
+            label: linux
+            binary: dist/PrivacyFirewall/PrivacyFirewall
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          else
+            version="$(python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
+
+      - name: Install project and build tooling
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # Non-editable so the bundle picks up a normal dist-info directory.
+          pip install ".[ui,ocr-lite,docx]"
+          pip install pyinstaller
+
+      - name: Build bundle
+        run: pyinstaller --clean --noconfirm packaging/privacy_firewall.spec
+
+      # PyMuPDF builds the synthetic smoke-test fixtures on the CI host. It is a
+      # test-only tool, deliberately excluded from the frozen bundle, so it is
+      # installed *after* the PyInstaller build to keep it out of the artifact.
+      - name: Install smoke-test tooling
+        shell: bash
+        run: pip install "pymupdf>=1.24"
+
+      - name: Smoke-test the frozen binary
+        shell: bash
+        run: python packaging/smoke_test.py "${{ matrix.binary }}"
+
+      # --- Windows: Inno Setup installer ----------------------------------
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup not found at $iscc" }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "packaging\windows\installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
+
+      # --- macOS: .dmg from the .app bundle -------------------------------
+      # Unsigned: Gatekeeper will warn until signing secrets are configured.
+      - name: Build macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist/installer dist/dmg
+          cp -R "dist/PrivacyFirewall.app" dist/dmg/
+          cp LICENSE packaging/SOURCE_OFFER.txt dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "Privacy Firewall" \
+            -srcfolder dist/dmg -ov -format UDZO \
+            "dist/installer/PrivacyFirewall-${{ steps.version.outputs.version }}.dmg"
+
+      # --- Linux: portable tarball ----------------------------------------
+      - name: Build Linux tarball
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/installer
+          cp LICENSE packaging/SOURCE_OFFER.txt dist/PrivacyFirewall/
+          tar -czf "dist/installer/PrivacyFirewall-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz" \
+            -C dist PrivacyFirewall
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.label }}
+          path: dist/installer/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach installers to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: installers
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installers/*
+          draft: true
+          generate_release_notes: true
