@@ -8,7 +8,12 @@ from typing import Any
 
 from privacy_firewall.engine.redaction import RedactionPlan, RedactionType
 from privacy_firewall.parsers.pdf_open import open_pdf
-from privacy_firewall.parsers.pdfium_compat import PdfiumDocument, Rect, open_document
+from privacy_firewall.parsers.pdfium_compat import (
+    PDFIUM_LOCK,
+    PdfiumDocument,
+    Rect,
+    open_document,
+)
 from privacy_firewall.renderer.pdfium_draw import PageWriter, base14_name
 
 
@@ -72,15 +77,20 @@ class PDFRenderer:
             EncryptedPDFError: If the source is password-protected and no
                 correct password was supplied.
         """
-        doc = open_pdf(input_path, password=password)
-        try:
-            self._apply_plan(doc, plan)
-            # Strip annotations and metadata from the shareable copy: PII in a
-            # form field, sticky note or the Info dictionary lives outside the
-            # content stream and would otherwise survive the redaction.
-            doc.save(str(output_path), sanitize=True)
-        finally:
-            doc.close()
+        # Hold the PDFium lock across the whole operation: the write path calls
+        # into PDFium's non-thread-safe C core (page load, search, the writer's
+        # draw/strip/regenerate, save), and the Studio server may render another
+        # page on a worker thread at the same time.
+        with PDFIUM_LOCK:
+            doc = open_pdf(input_path, password=password)
+            try:
+                self._apply_plan(doc, plan)
+                # Strip annotations and metadata from the shareable copy: PII in
+                # a form field, sticky note or the Info dictionary lives outside
+                # the content stream and would otherwise survive the redaction.
+                doc.save(str(output_path), sanitize=True)
+            finally:
+                doc.close()
 
         return Path(output_path).resolve()
 
@@ -95,12 +105,13 @@ class PDFRenderer:
         Returns:
             Raw bytes of the redacted PDF.
         """
-        doc = open_document(stream=data)
-        try:
-            PDFRenderer._apply_plan(doc, plan)
-            return doc.tobytes(sanitize=True)
-        finally:
-            doc.close()
+        with PDFIUM_LOCK:
+            doc = open_document(stream=data)
+            try:
+                PDFRenderer._apply_plan(doc, plan)
+                return doc.tobytes(sanitize=True)
+            finally:
+                doc.close()
 
     @staticmethod
     def _apply_plan(doc: PdfiumDocument, plan: RedactionPlan) -> None:
@@ -294,16 +305,23 @@ class PDFRenderer:
                     hit = PDFRenderer._char_hit(char, rects)
                     if hit is not None:
                         flush(run, span)
-                        # First redacted character anchors the replacement.
-                        anchors.setdefault(
-                            hit,
-                            {
+                        # The first redacted character fixes the replacement's
+                        # baseline; its visual style (size/colour/font) is taken
+                        # from the *largest* glyph in the region, so a leading
+                        # size-1 space caught by the rect can't shrink the stars
+                        # to nothing when the real value sits at normal size.
+                        anchor = anchors.get(hit)
+                        if anchor is None:
+                            anchors[hit] = {
                                 "origin": char["origin"],
                                 "size": span["size"],
                                 "color": span["color"],
                                 "font": span["font"],
-                            },
-                        )
+                            }
+                        elif span["size"] > anchor["size"]:
+                            anchor["size"] = span["size"]
+                            anchor["color"] = span["color"]
+                            anchor["font"] = span["font"]
                         continue
                     if run:
                         # Split the run wherever the original glyph position

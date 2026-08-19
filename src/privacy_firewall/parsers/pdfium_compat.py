@@ -24,9 +24,11 @@ reports blocks from.
 from __future__ import annotations
 
 import ctypes
+import functools
 import io
 import math
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,36 @@ from typing import Any
 import pypdfium2 as pdfium
 import pypdfium2.raw as raw
 
-__all__ = ["Annotation", "PdfiumDocument", "PdfiumPage", "Rect", "open_document"]
+__all__ = [
+    "PDFIUM_LOCK",
+    "Annotation",
+    "PdfiumDocument",
+    "PdfiumPage",
+    "Rect",
+    "open_document",
+]
+
+PDFIUM_LOCK = threading.RLock()
+"""Process-wide lock serialising every entry into the PDFium C library.
+
+PDFium's core is not thread-safe: two threads running its C functions at once
+corrupt shared state and segfault (``OSError: access violation``). The Studio
+server renders pages and parses documents concurrently in a threadpool, so all
+primitive read/render calls here — and the renderer's write sequence — hold
+this single lock. It is re-entrant so a guarded high-level operation (rendering
+redactions) may call other guarded primitives on the same thread.
+"""
+
+def synchronized[F: Callable[..., Any]](fn: F) -> F:
+    """Serialise *fn* against all other PDFium access via :data:`PDFIUM_LOCK`."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with PDFIUM_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
 
 #: Document Info-dictionary keys that can carry PII (name, account, email in an
 #: export tool's stamp). Producer/Creator/dates are excluded as non-PII noise.
@@ -244,6 +275,7 @@ class PdfiumPage:
         """The underlying :class:`pypdfium2.PdfPage`, for write-side access."""
         return self._page
 
+    @synchronized
     def invalidate(self) -> None:
         """Drop cached text/geometry after the page has been edited."""
         if self._textpage is not None:
@@ -251,6 +283,7 @@ class PdfiumPage:
             self._textpage = None
         self._cache.clear()
 
+    @synchronized
     def annotations(self) -> list[Annotation]:
         """Text-bearing annotations on this page (comments, notes, form fields).
 
@@ -299,6 +332,7 @@ class PdfiumPage:
             self._textpage = self._page.get_textpage()
         return self._textpage
 
+    @synchronized
     def _chars(self) -> list[dict[str, Any]]:
         """Every character with geometry and style, in content-stream order.
 
@@ -312,6 +346,7 @@ class PdfiumPage:
         tp = self._tp()
         height = self._media_height
         loose = raw.FS_RECTF()
+        char_matrix = raw.FS_MATRIX()
         name_buf = ctypes.create_string_buffer(128)
         flags = ctypes.c_int()
         ox, oy = ctypes.c_double(), ctypes.c_double()
@@ -335,7 +370,18 @@ class PdfiumPage:
                 colour = (red.value << 16) | (green.value << 8) | blue.value
             length = raw.FPDFText_GetFontInfo(tp, i, name_buf, 128, flags)
             font = name_buf.raw[: max(0, length)].rstrip(b"\x00").decode("utf-8", "replace")
-            size = float(raw.FPDFText_GetFontSize(tp, i)) or _DEFAULT_FONT_SIZE
+            # ``FPDFText_GetFontSize`` is the nominal em size from the ``Tf``
+            # operator; the glyph's rendered size also depends on the text
+            # matrix (a doc may set size 220 and scale the matrix by 0.05 to
+            # draw at 11pt). Fold in the matrix's vertical scale so ``size`` is
+            # the effective rendered size — what re-inserting redaction survivor
+            # text needs, and what PyMuPDF's ``get_text`` reported before the
+            # PDFium migration.
+            nominal = float(raw.FPDFText_GetFontSize(tp, i))
+            yscale = 1.0
+            if raw.FPDFText_GetMatrix(tp, i, char_matrix):
+                yscale = math.hypot(char_matrix.c, char_matrix.d)
+            size = (nominal * yscale) or _DEFAULT_FONT_SIZE
             owner = ctypes.cast(raw.FPDFText_GetTextObject(tp, i), ctypes.c_void_p).value
             chars.append(
                 {
@@ -489,6 +535,7 @@ class PdfiumPage:
         self._cache["images"] = blocks
         return blocks
 
+    @synchronized
     def get_images(self, full: bool = False) -> list[tuple[Any, ...]]:
         """Image listing — only its length was ever used (image count)."""
         del full
@@ -602,6 +649,7 @@ class PdfiumPage:
                 word_no = flush(pending, word_no, top, bottom)
         return words
 
+    @synchronized
     def search_for(self, needle: str, *, clip: Rect | None = None) -> list[Rect]:
         """Rectangles of every occurrence of *needle* on the page."""
         if not needle:
@@ -621,6 +669,7 @@ class PdfiumPage:
 
     # ---- raster ---------------------------------------------------------
 
+    @synchronized
     def get_pixmap(
         self,
         *,
@@ -650,6 +699,7 @@ class PdfiumPage:
             )
         return Pixmap(self._page.render(scale=factor, crop=crop))
 
+    @synchronized
     def close(self) -> None:
         """Release the text page held for this page."""
         if self._textpage is not None:
@@ -685,6 +735,7 @@ class PdfiumDocument:
         """Number of pages."""
         return len(self._pdf)
 
+    @synchronized
     def metadata(self) -> dict[str, str]:
         """PII-bearing Info-dictionary entries (Title/Author/Subject/Keywords).
 
@@ -704,6 +755,7 @@ class PdfiumDocument:
         """Number of pages."""
         return 0 if self._needs_pass else len(self._pdf)
 
+    @synchronized
     def __getitem__(self, index: int) -> PdfiumPage:
         """Return (and cache) the page at *index*."""
         if index not in self._pages:
@@ -722,6 +774,7 @@ class PdfiumDocument:
         """Close the document on context exit."""
         self.close()
 
+    @synchronized
     def close(self) -> None:
         """Release every page and the underlying document."""
         if self._closed:
@@ -732,6 +785,7 @@ class PdfiumDocument:
         self._pages.clear()
         self._pdf.close()
 
+    @synchronized
     def sanitize(self) -> None:
         """Strip every annotation from every page (comments, notes, form fields).
 
@@ -750,6 +804,7 @@ class PdfiumDocument:
 
     # ---- output ---------------------------------------------------------
 
+    @synchronized
     def tobytes(self, *, sanitize: bool = False) -> bytes:
         """Serialise the document, always unencrypted.
 
@@ -760,6 +815,7 @@ class PdfiumDocument:
         self.save(buf, sanitize=sanitize)
         return buf.getvalue()
 
+    @synchronized
     def save(self, dest: Any, *, sanitize: bool = False) -> None:
         """Write the document to a path or file object, always unencrypted.
 
@@ -802,6 +858,7 @@ def is_password_error(exc: Exception) -> bool:
     return "password" in str(exc).lower()
 
 
+@synchronized
 def open_document(
     path: str | Path | None = None,
     *,
@@ -844,6 +901,7 @@ class _EmptyPdf:
         """A locked document exposes no pages."""
         return 0
 
+    @synchronized
     def __getitem__(self, index: int) -> Any:
         """Always fails — a locked document has no readable pages.
 
@@ -853,5 +911,6 @@ class _EmptyPdf:
         msg = "document is locked"
         raise IndexError(msg)
 
+    @synchronized
     def close(self) -> None:
         """No resources to release."""

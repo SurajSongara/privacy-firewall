@@ -1,9 +1,11 @@
+import threading
 from pathlib import Path
 
 import fitz
 import pytest
 
 from privacy_firewall.models.geometry import BoundingBox
+from privacy_firewall.parsers.pdf_parser import PDFParser
 from privacy_firewall.renderer.page_images import (
     bbox_to_pixels,
     page_count,
@@ -18,6 +20,18 @@ def pdf(tmp_path: Path) -> Path:
     doc = fitz.open()
     doc.new_page(width=612, height=792)
     doc.new_page(width=612, height=792)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def text_pdf(tmp_path: Path) -> Path:
+    path = tmp_path / "text.pdf"
+    doc = fitz.open()
+    for n in range(4):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((60, 100), f"Page {n} PAN ABCDE1234F email a@b.com", fontsize=11)
     doc.save(str(path))
     doc.close()
     return path
@@ -53,6 +67,40 @@ class TestPageImages:
     def test_render_bytes_page_out_of_range(self, pdf: Path) -> None:
         with pytest.raises(ValueError, match="out of range"):
             render_page_image_bytes(pdf.read_bytes(), 3)
+
+    def test_concurrent_render_and_parse_is_safe(self, text_pdf: Path) -> None:
+        """Rendering and parsing from many threads must not crash PDFium.
+
+        Regression: PDFium's C core is not thread-safe, so the Studio
+        server's threadpool could run a render and a parse (or two renders)
+        at once and segfault with an ``access violation``. ``PDFIUM_LOCK``
+        serialises every entry into the library. A regression here surfaces
+        as a native crash that takes the whole test process down.
+        """
+        errors: list[BaseException] = []
+
+        def render_loop() -> None:
+            try:
+                for _ in range(8):
+                    for page in range(1, 5):
+                        render_page_image(text_pdf, page, dpi=110)
+            except BaseException as exc:  # noqa: BLE001 - report, don't hang
+                errors.append(exc)
+
+        def parse_loop() -> None:
+            try:
+                for _ in range(8):
+                    PDFParser(text_pdf).parse()
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=render_loop) for _ in range(3)]
+        threads += [threading.Thread(target=parse_loop) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert not errors, errors
 
     def test_bbox_transform(self) -> None:
         bbox = BoundingBox(x0=10.0, y0=20.0, x1=110.0, y1=40.0)

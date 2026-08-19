@@ -12,7 +12,7 @@ from pathlib import Path
 
 from privacy_firewall.models.geometry import BoundingBox
 from privacy_firewall.parsers.pdf_open import open_pdf
-from privacy_firewall.parsers.pdfium_compat import open_document
+from privacy_firewall.parsers.pdfium_compat import PDFIUM_LOCK, open_document
 
 DEFAULT_DPI = 144
 
@@ -65,22 +65,25 @@ def render_page_image(
             password was supplied.
     """
     scale = dpi / 72.0
-    doc = open_pdf(pdf_path, password=password)
-    try:
-        if not 1 <= page_number <= doc.page_count:
-            msg = f"page {page_number} out of range (1..{doc.page_count})"
-            raise ValueError(msg)
-        page = doc[page_number - 1]
-        pixmap = page.get_pixmap(scale=scale)
-        return PageImage(
-            page_number=page_number,
-            width=pixmap.width,
-            height=pixmap.height,
-            scale=scale,
-            png_bytes=pixmap.tobytes("png"),
-        )
-    finally:
-        doc.close()
+    # PDFium is not thread-safe; the Studio server renders pages from a
+    # threadpool. Serialise the whole open/load/render/close sequence.
+    with PDFIUM_LOCK:
+        doc = open_pdf(pdf_path, password=password)
+        try:
+            if not 1 <= page_number <= doc.page_count:
+                msg = f"page {page_number} out of range (1..{doc.page_count})"
+                raise ValueError(msg)
+            page = doc[page_number - 1]
+            pixmap = page.get_pixmap(scale=scale)
+            return PageImage(
+                page_number=page_number,
+                width=pixmap.width,
+                height=pixmap.height,
+                scale=scale,
+                png_bytes=pixmap.tobytes("png"),
+            )
+        finally:
+            doc.close()
 
 
 def render_page_image_bytes(data: bytes, page_number: int, dpi: int = DEFAULT_DPI) -> PageImage:
@@ -101,7 +104,7 @@ def render_page_image_bytes(data: bytes, page_number: int, dpi: int = DEFAULT_DP
         ValueError: If *page_number* is out of range.
     """
     scale = dpi / 72.0
-    with open_document(stream=data) as doc:
+    with PDFIUM_LOCK, open_document(stream=data) as doc:
         if not 1 <= page_number <= doc.page_count:
             msg = f"page {page_number} out of range (1..{doc.page_count})"
             raise ValueError(msg)

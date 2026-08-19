@@ -178,6 +178,38 @@ class TestExtractionShapes:
         with open_document(stream=_pdf([(50, 100, "AB")])) as doc, pytest.raises(ValueError):
             doc[0].get_text("html")
 
+    def test_span_size_folds_in_text_matrix_scale(self) -> None:
+        """``size`` is the effective drawn size, not the nominal ``Tf`` em.
+
+        A PDF can set a large nominal font size and scale the text matrix
+        down to draw small (income-tax computations do exactly this: size
+        220 scaled by 0.05 to render at 11pt). ``size`` must report the
+        rendered size — what the renderer re-inserts redaction survivor
+        text at — so a scaled line reads the same as an unscaled one drawn
+        at the identical visual size.
+        """
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        # Nominal 8pt scaled 3x draws at 24pt — same as the plain 24pt line.
+        page.insert_text(
+            (60, 130),
+            "SCALED",
+            fontsize=8,
+            morph=(fitz.Point(60, 130), fitz.Matrix(3, 3)),
+        )
+        page.insert_text((60, 200), "NORMAL", fontsize=24)
+        data = doc.tobytes()
+        doc.close()
+
+        sizes: dict[str, float] = {}
+        with open_document(stream=data) as opened:
+            for block in opened[0].get_text("rawdict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        sizes[span["text"]] = span["size"]
+        assert sizes["SCALED"] == pytest.approx(24.0, abs=0.5)
+        assert sizes["SCALED"] == pytest.approx(sizes["NORMAL"], abs=0.5)
+
     def test_search_finds_every_occurrence(self) -> None:
         data = _pdf([(50, 100, "ABCPE1234F"), (50, 130, "ABCPE1234F")])
         with open_document(stream=data) as doc:
