@@ -196,7 +196,15 @@ class PageWriter:
         """Paint *hits* black inside *image*, whose page extent is *bounds*."""
         from PIL import ImageDraw
 
-        frame = image.get_bitmap(render=False).to_pil().convert("RGB")
+        # ``render=True`` composites the image's soft mask into an alpha channel;
+        # reading the raw base (``render=False``) and writing it back as RGB
+        # strips that mask, so a faint watermark's normally-transparent base
+        # pixels (often solid black at the edges) render as opaque black bars
+        # across the page. Keep the frame RGBA so transparency survives the
+        # round-trip while opaque scans (all alpha 255) are blanked as before.
+        frame = image.get_bitmap(render=True).to_pil()
+        if frame.mode != "RGBA":
+            frame = frame.convert("RGBA")
         cols, rows = frame.size
         draw = ImageDraw.Draw(frame)
         painted = False
@@ -210,7 +218,7 @@ class PageWriter:
             x0, x1 = max(0, min(x0, cols)), max(0, min(x1, cols))
             y0, y1 = max(0, min(y0, rows)), max(0, min(y1, rows))
             if x1 > x0 and y1 > y0:
-                draw.rectangle([x0, y0, x1 - 1, y1 - 1], fill=(0, 0, 0))
+                draw.rectangle([x0, y0, x1 - 1, y1 - 1], fill=(0, 0, 0, 255))
                 painted = True
         if not painted:
             return
