@@ -10,6 +10,7 @@ from privacy_firewall.models.blocks import Block, ImageBlock, TextBlock, TextSpa
 from privacy_firewall.models.document import Document, Page
 from privacy_firewall.models.geometry import BoundingBox
 from privacy_firewall.parsers.pdf_open import open_pdf
+from privacy_firewall.parsers.pdfium_compat import PDFIUM_LOCK
 
 WordTuple = tuple[float, float, float, float, str, int, int, int]
 """Type of each word tuple returned by ``get_text("words")``."""
@@ -37,24 +38,27 @@ class PDFParser:
             EncryptedPDFError: If the PDF is password-protected and no
                 correct password was supplied.
         """
-        doc = open_pdf(self._path, password=self._password)
-        pages: list[Page] = []
+        # PDFium is not thread-safe; guard the whole read against a concurrent
+        # render on another Studio worker thread (page.rect is a C call too).
+        with PDFIUM_LOCK:
+            doc = open_pdf(self._path, password=self._password)
+            pages: list[Page] = []
 
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            raw: dict[str, Any] = page.get_text("dict")
-            words_data: list[WordTuple] = page.get_text("words")
-            blocks = self._extract_blocks(raw, words_data, page_num + 1)
-            pages.append(
-                Page(
-                    page_number=page_num + 1,
-                    width=page.rect.width,
-                    height=page.rect.height,
-                    blocks=blocks,
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                raw: dict[str, Any] = page.get_text("dict")
+                words_data: list[WordTuple] = page.get_text("words")
+                blocks = self._extract_blocks(raw, words_data, page_num + 1)
+                pages.append(
+                    Page(
+                        page_number=page_num + 1,
+                        width=page.rect.width,
+                        height=page.rect.height,
+                        blocks=blocks,
+                    )
                 )
-            )
 
-        doc.close()
+            doc.close()
         return Document(pages=pages)
 
     @staticmethod
@@ -72,24 +76,25 @@ class PDFParser:
             EncryptedPDFError: If the PDF is password-protected and no
                 correct password was supplied.
         """
-        doc = open_pdf(stream=data, password=password)
-        pages: list[Page] = []
+        with PDFIUM_LOCK:
+            doc = open_pdf(stream=data, password=password)
+            pages: list[Page] = []
 
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            raw: dict[str, Any] = page.get_text("dict")
-            words_data: list[WordTuple] = page.get_text("words")
-            blocks = PDFParser._extract_blocks(raw, words_data, page_num + 1)
-            pages.append(
-                Page(
-                    page_number=page_num + 1,
-                    width=page.rect.width,
-                    height=page.rect.height,
-                    blocks=blocks,
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                raw: dict[str, Any] = page.get_text("dict")
+                words_data: list[WordTuple] = page.get_text("words")
+                blocks = PDFParser._extract_blocks(raw, words_data, page_num + 1)
+                pages.append(
+                    Page(
+                        page_number=page_num + 1,
+                        width=page.rect.width,
+                        height=page.rect.height,
+                        blocks=blocks,
+                    )
                 )
-            )
 
-        doc.close()
+            doc.close()
         return Document(pages=pages)
 
     @staticmethod

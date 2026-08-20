@@ -1,8 +1,11 @@
 """Tests for the PDF renderer."""
 
+import io
 from pathlib import Path
 
 import fitz
+import pypdfium2 as pdfium
+from PIL import Image
 
 from privacy_firewall.engine.redaction import Redaction, RedactionPlan, RedactionType
 from privacy_firewall.models.detection import Detection
@@ -28,6 +31,25 @@ def _make_two_page_pdf() -> bytes:
     page1.insert_text((50, 100), "Page one PAN: AAAAAB1111B", fontsize=12)
     page2 = doc.new_page()
     page2.insert_text((50, 100), "Page two email: user@test.com", fontsize=12)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def _make_pdf_with_translucent_watermark() -> bytes:
+    """One-page PDF: text over a mostly-transparent black watermark image.
+
+    Mirrors real challan/statement watermarks (a faint emblem whose base
+    raster is solid black, made faint by a soft mask). Redacting the text
+    over it must not strip the mask and turn the base black.
+    """
+    watermark = Image.new("RGBA", (200, 100), (0, 0, 0, 40))
+    buf = io.BytesIO()
+    watermark.save(buf, format="PNG")
+    doc = fitz.open()
+    page = doc.new_page(width=300, height=200)
+    page.insert_image(fitz.Rect(50, 50, 250, 150), stream=buf.getvalue())
+    page.insert_text((60, 105), "PAN ABCDE1234F", fontsize=12)
     data = doc.tobytes()
     doc.close()
     return data
@@ -532,3 +554,86 @@ class TestPDFRenderer:
             page1_text = doc[1].get_text()
             assert "AAAAAB1111B" not in page0_text
             assert "user@test.com" in page1_text
+
+    def test_redaction_over_watermark_preserves_transparency(self) -> None:
+        """A redaction overlapping a faint watermark must not blacken it.
+
+        Regression: ``clear_image_pixels`` read the image's raw base (no
+        soft mask) and wrote it back as RGB, stripping the mask so the
+        watermark's opaque black base rendered as page-height black bars.
+        """
+        data = _make_pdf_with_translucent_watermark()
+        det = _detection(
+            bbox=BoundingBox(x0=78.0, y0=95.0, x1=150.0, y1=108.0),
+        )
+        plan = RedactionPlan(
+            redactions=[
+                Redaction(
+                    detection=det,
+                    redaction_type=RedactionType.BLACK_BAR,
+                    page_number=1,
+                    span=det.span,
+                    bbox=det.bbox,
+                )
+            ]
+        )
+        result = PDFRenderer.render_bytes(data, plan)
+
+        with pdfium.PdfDocument(result) as doc:
+            image = doc[0].render(scale=2.0).to_pil().convert("RGB")
+        # The watermark spans page x[50,250] y[50,150] -> pixels x[100,500]
+        # y[100,300]. These points sit well inside it but clear of the
+        # redaction bar over the PAN; they must stay faint, not black.
+        for point in ((300, 270), (460, 270), (400, 250)):
+            r, g, b = image.getpixel(point)
+            assert min(r, g, b) > 150, f"watermark blackened at {point}: {(r, g, b)}"
+
+    def test_redaction_on_scaled_matrix_text_stays_sized(self) -> None:
+        """Survivor text on a scaled-matrix line re-inserts at drawn size.
+
+        Regression: the snapshot read the nominal ``Tf`` size (e.g. 120)
+        instead of the size the glyph is actually drawn at (e.g. 12 under a
+        0.1x text matrix), so re-inserting the surviving characters painted
+        the whole line in oversized black glyphs — a page-swallowing blob.
+        """
+        doc = fitz.open()
+        page = doc.new_page(width=400, height=200)
+        # Nominal 120pt scaled 0.1x -> drawn at 12pt.
+        page.insert_text(
+            (40, 60),
+            "PAN ABCDE1234F",
+            fontsize=120,
+            morph=(fitz.Point(40, 60), fitz.Matrix(0.1, 0.1)),
+        )
+        data = doc.tobytes()
+        doc.close()
+
+        det = _detection(bbox=BoundingBox(x0=52.0, y0=51.0, x1=110.0, y1=62.0))
+        plan = RedactionPlan(
+            redactions=[
+                Redaction(
+                    detection=det,
+                    redaction_type=RedactionType.REPLACE,
+                    page_number=1,
+                    span=det.span,
+                    bbox=det.bbox,
+                )
+            ]
+        )
+        result = PDFRenderer.render_bytes(data, plan)
+
+        with fitz.open(stream=result, filetype="pdf") as out:
+            assert "ABCDE1234F" not in out[0].get_text()
+        with pdfium.PdfDocument(result) as rendered:
+            grey = rendered[0].render(scale=3.0).to_pil().convert("L")
+        cols, rows = grey.size
+        px = grey.load()
+        black = sum(
+            1
+            for x in range(0, cols, 2)
+            for y in range(0, rows, 2)
+            if px[x, y] < 40
+        )
+        # A 12pt line covers well under 1% of the page in ink; the blob bug
+        # blackened many times that. Guard with a generous margin.
+        assert black < (cols // 2) * (rows // 2) * 0.01, f"oversized ink: {black}"
